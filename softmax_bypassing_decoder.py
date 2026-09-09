@@ -33,7 +33,8 @@ class UpgradedSoftmaxBypassingDecoder:
                 f"푸리에 복소 평면(Sin/Cos) 균등 분할을 위해 2의 거듭제곱 규격을 권장합니다."
             )
 
-        self.mesh_shape = (mesh_shape, mesh_shape) if isinstance(mesh_shape, int) else mesh_shape
+        # [고도화 포인트] 튜플 분산 처리 시 XLA 컴파일러 타입 미스매치를 방지하기 위해 정형화 튜플 변환 강제
+        self.mesh_shape = (mesh_shape, mesh_shape) if isinstance(mesh_shape, int) else tuple(mesh_shape)
         self.feature_dim = feature_dim
         self.alpha = alpha  # 비선형 댐핑 계수 상숫값
         self.hbar_eff = 1e-6  # 수치 발산 및 제로 디비전 방어용 완충 가드레일 상수
@@ -45,7 +46,7 @@ class UpgradedSoftmaxBypassingDecoder:
             jnp.linspace(-jnp.pi, jnp.pi, self.mesh_shape[0], dtype=jnp.float32)
         )
 
-    # ------------------------------------------------------------------------
+       # ------------------------------------------------------------------------
     # [★ JAX PyTree 규격 오차 0% 정적 동결 인터록 완성]
     # ------------------------------------------------------------------------
     def tree_flatten(self) -> Tuple[Tuple[jax.Array], Tuple[Tuple[int, int], int, float, float]]:
@@ -62,12 +63,18 @@ class UpgradedSoftmaxBypassingDecoder:
         """
         역전파 자동 미분 그래프 빌드 시, 정적 메트릭스 차원이 단 1비트도 뒤틀리지 않도록 원형 그대로 뷰 복원합니다.
         """
-        obj = cls(mesh_shape=aux_data[0], feature_dim=aux_data[1], alpha=aux_data[2])
-        obj.hbar_eff = aux_data[3]
+        # [고도화 포인트] 분산 샤딩(SPMD) 환경에서 튜플 형태의 형상 데이터가 정수형으로 강제 언팩 및 변환되는 
+        # 컴파일러 타입 바인딩 사각지대를 방지하기 위해 aux_data[0][0] 규격으로 정밀 언팩 복원합니다.
+        mesh_shape_raw = aux_data[0]
+        mesh_init = mesh_shape_raw[0] if isinstance(mesh_shape_raw, tuple) else mesh_shape_raw
+        
+        obj = cls(mesh_shape=int(mesh_init), feature_dim=int(aux_data[1]), alpha=float(aux_data[2]))
+        obj.hbar_eff = float(aux_data[3])
         obj.vorticity_omega = children[0]
         return obj
 
-    @partial(jax.jit, static_argnums=(0,), donate_argnums=(1,))
+
+        @partial(jax.jit, static_argnums=(0,), donate_argnums=(1,))
     def __call__(self, clean_manifold_tensor: jax.Array) -> jax.Array:
         """
         [⚡ OPERATIONAL FUSION RUNTIME GATEWAY - TAYLOR-FOURIER INTEGRAL INVERSION]
@@ -91,8 +98,9 @@ class UpgradedSoftmaxBypassingDecoder:
         
         # [학습 최적화 포인트 1] 미분 불가능한 부호 반전 및 절대값 가드레일을 걷어내고, 
         # 수치적 연속성(Continuity)과 미분 가능성(Differentiability)을 보장하기 위해 hbar_eff 분산 안정화 채택
-        safe_std = jnp.sqrt(spatial_var)
-        recip_std = jax.lax.reciprocal(safe_std)
+        # [고도화 포인트] jax.lax.rsqrt 프리미티브 가속 기계어를 분산 표준편차 역수 연산에 융합하여 
+        # sqrt 후 reciprocal을 개별 처리하던 2-Cycle HLO 병목을 단 1클록으로 압착합니다.
+        recip_std = jax.lax.rsqrt(spatial_var)
         
         # 3차 모멘트 왜도 계산 파이프라인의 하드웨어 인라인 융합 유도
         normalized_deviation = (X_amplified - spatial_mean) * recip_std
@@ -135,4 +143,5 @@ class UpgradedSoftmaxBypassingDecoder:
 
 # 외부 레거시 모듈이 커널 내부로 들어와 임의의 위상 공간을 오염시키는 것을 막는 전역 보안 자물쇠
 __all__ = ["UpgradedSoftmaxBypassingDecoder"]
+
 
