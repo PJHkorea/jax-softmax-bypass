@@ -21,3 +21,39 @@ XLA 분산 가속기 클러스터 환경에서 AI 모델 연산 최악의 자원
 - hijack_llama_wave_attention.py: 6세대 비동기 컨텍스트 펜스와 0ns 포인터 스왑을 장착한 런타임 하이재커 래퍼(Wrapper)
 
 - test_wave_attention.py: OS 물리 메모리 지터 및 자동 미분 도함수 전하량을 사증하는 통합 테스트 벤치(Test)
+
+-  spmd_sharding_lanes.py 이하 다이어그램 참조
+```mermaid
+graph TD
+    classDef nodeStyle fill:#1e1e2e,stroke:#313244,stroke-width:2px,color:#cdd6f4,font-family:monospace;
+    classDef titleStyle fill:#89b4fa,stroke:#11111b,stroke-width:2px,color:#11111b,font-weight:bold,font-family:monospace;
+    classDef subTitleStyle fill:#fab387,stroke:#11111b,stroke-width:2px,color:#11111b,font-weight:bold,font-family:monospace;
+
+    %% Global Input
+    GI["[ 전역 인풋 4D 매니폴드 진입 ]"]:::titleStyle
+
+    %% Distribution Axes
+    DA_Batch["▼ (data 축 분산: Batch / N)"]:::subTitleStyle
+    DA_Head["▼ (model 축 분산: Heads / M)"]:::subTitleStyle
+
+    %% Accelerator Nodes
+    subgraph Cluster_Nodes [" "]
+        direction LR
+        
+        Node0["🚀 Accelerator Node (0, 0)<br><br>• Batch [0:B/4], Head [0:H/8] 선점<br>• Taylor / 왜도 인플레이스 정류<br>• SRAM 뱅크 충돌 0% 가속 적재"]:::nodeStyle
+        
+        Node1["🚀 Accelerator Node (0, 1)<br><br>• Batch [0:B/4], Head [H/8:2H/8]<br>• 독립 푸리에 직교 위상 평면 연사<br>• L2 NormParity 에너지 보존 전사"]:::nodeStyle
+    end
+
+    %% Connections
+    GI --> DA_Batch
+    GI --> DA_Head
+    DA_Batch --> Node0
+    DA_Head --> Node1
+    
+    %% Communication Link
+    Node0 <--> |"◀─ 0ns 복사 제로 / 통신 락 0% ─▶"| Node1
+
+    %% Layout adjustments
+    style Cluster_Nodes fill:none,stroke:none;
+```
