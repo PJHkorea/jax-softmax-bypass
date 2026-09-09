@@ -24,36 +24,48 @@ XLA 분산 가속기 클러스터 환경에서 AI 모델 연산 최악의 자원
 
 -  spmd_sharding_lanes.py 이하 다이어그램 참조
 
+
 ```mermaid
-flowchart TD
-    %% 전역 스타일 및 실리콘 테마 바인딩
-    classDef default fill:#1f2937,stroke:#374151,stroke-width:1px,color:#f9fafb;
-    classDef highlight fill:#2563eb,stroke:#3b82f6,stroke-width:2px,color:#ffffff;
-    classDef orange fill:#f97316,stroke:#ea580c,stroke-width:1px,color:#ffffff;
+flowchart LR
+    %% 전역 실리콘 테마 및 하드웨어 스타일 가드 선포
+    classDef default fill:#1f2937,stroke:#374151,stroke-width:1px,color:#f9fafb,font-size:12px;
+    classDef blue fill:#2563eb,stroke:#3b82f6,stroke-width:2px,color:#ffffff,font-size:12px,font-weight:bold;
+    classDef orange fill:#ea580c,stroke:#f97316,stroke-width:1px,color:#ffffff,font-size:12px;
+    classDef dark fill:#111827,stroke:#1f2937,stroke-width:1px,color:#9ca3af,font-size:12px;
     
-    %% [전역 인풋 4D 매니폴드 진입]
-    INPUT["[ 전역 인풋 4D 매니폴드 진입 ]<br>Shape: [Batch, NumHeads, SeqLen, HeadDim]"]:::highlight
+    %% ------------------------------------------------------------------------
+    %% [상단 구조적 도메인 레이어 경계 수립]
+    %% ------------------------------------------------------------------------
+    subgraph ROUTING_LAYER ["분산 라우팅 레이어"]
+        MODEL_SHARD["▼ (model 축 분산:<br>Heads / M)"]:::orange
+        DATA_SHARD["▼ (data 축 분산:<br>Batch / N)"]:::orange
+    end
+    
+    subgraph HARDWARE_ARRAY ["물리 가속기 가동 노드 어레이"]
+        NODE_00["🚀 Accelerator Node (0, 0)<br><br>• Batch [0:B/4], Head [0:H/8] 선점<br>• Taylor / 왜도 인플레이스 정류<br>• SRAM 뱅크 충돌 0% 가속 적재"]
+        COMM_BARRIER["◀─ 0ns 복사 제로 /<br>통신 락 0% ─▶"]:::dark
+        NODE_01["🚀 Accelerator Node (0, 1)<br><br>• Batch [0:B/4], Head [H/8:2H/8] 선점<br>• 독립 푸리에 직교 위상 평면 연사<br>• L2 NormParity 에너지 보존 전사"]
+    end
 
-    %% [분산 배정 축 사상 가드레일]
-    DATA_SHARD["▼ (data 축 분산:<br>Batch / N)"]:::orange
-    MODEL_SHARD["▼ (model 축 분산:<br>Heads / M)"]:::orange
+    %% 최전방 매니폴드 주소선 배치
+    INPUT["[전역 인풋 4D 매니폴드 진입]<br>Shape: [Batch, NumHeads, S]"]:::blue
 
-    %% [물리 가속기 가동 노드 어레이]
-    NODE_00["🚀 Accelerator Node (0, 0)<br><br>• Batch [0:B/4], Head [0:H/8] 선점<br>• Taylor / 왜도 인플레이스 정류<br>• SRAM 뱅크 충돌 0% 가속 적재"]
-    NODE_01["🚀 Accelerator Node (0, 1)<br><br>• Batch [0:B/4], Head [H/8:2H/8] 선점<br>• 독립 푸리에 직교 위상 평면 연사<br>• L2 NormParity 에너지 보존 전사"]
-
-    %% [0ns 통신 프리미티브 배리어]
-    COMM_BARRIER["◀─ 0ns 복사 제로 / 통신 락 0% ─▶"]:::highlight
-
-    %% 텐서 주소선 라우팅 연결
-    INPUT --> DATA_SHARD
+    %% ------------------------------------------------------------------------
+    %% 0ns 무복사 하이브리드 데이터 버스 라우팅 링크
+    %% ------------------------------------------------------------------------
     INPUT --> MODEL_SHARD
+    INPUT --> DATA_SHARD
     
-    DATA_SHARD --> NODE_00
     MODEL_SHARD --> NODE_01
+    DATA_SHARD --> NODE_00
     
-    %% 하드웨어 상호 인터록 링크
     NODE_00 <==> COMM_BARRIER
     COMM_BARRIER <==> NODE_01
+
+    %% 서브그래프 시각적 정형화 스타일 적용
+    style ROUTING_LAYER fill:none,stroke:none,color:#9ca3af,font-size:14px,font-weight:bold;
+    style HARDWARE_ARRAY fill:none,stroke:none,color:#9ca3af,font-size:14px,font-weight:bold;
+
 ```
+
 
