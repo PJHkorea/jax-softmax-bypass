@@ -24,6 +24,15 @@ class UpgradedSoftmaxBypassingDecoder:
         """
         [INIT] 하드웨어 버스 stride 규격 및 주파수 도메인 직교 기저 고정 바인딩.
         """
+        # [🛡️ 하드웨어 버스 정렬 인터록] 
+        # 후속 푸리에 직교 기저(Sin/Cos) 분할 매핑 시, 하드웨어 메모리 정렬 및 매트릭스 레이아웃 
+        # 붕괴를 원천 차단하기 위해 feature_dim이 짝수인지 컴파일 및 초기화 타임에 즉시 검증합니다.
+        if feature_dim % 2 != 0:
+            raise ValueError(
+                f"[HARDWARE ALIGNMENT ERROR] feature_dim은 반드시 짝수여야 합니다. (입력값: {feature_dim})\n"
+                f"푸리에 복소 평면(Sin/Cos) 균등 분할을 위해 2의 거듭제곱 규격을 권장합니다."
+            )
+
         self.mesh_shape = (mesh_shape, mesh_shape) if isinstance(mesh_shape, int) else mesh_shape
         self.feature_dim = feature_dim
         self.alpha = alpha  # 비선형 댐핑 계수 상숫값
@@ -58,8 +67,7 @@ class UpgradedSoftmaxBypassingDecoder:
         obj.vorticity_omega = children[0]
         return obj
 
-
-       @partial(jax.jit, static_argnums=(0,), donate_argnums=(1,))
+    @partial(jax.jit, static_argnums=(0,), donate_argnums=(1,))
     def __call__(self, clean_manifold_tensor: jax.Array) -> jax.Array:
         """
         [⚡ OPERATIONAL FUSION RUNTIME GATEWAY - TAYLOR-FOURIER INTEGRAL INVERSION]
@@ -95,7 +103,7 @@ class UpgradedSoftmaxBypassingDecoder:
 
         # [🛡️ COMPILER HLO INLINE FUSION - 푸리에 직교 기저(Sin/Cos) 결합 완성]
         # 정보 손실(Rank Collapse)에 따른 난해도(PPL) 폭발을 물리적으로 제어하기 위해 오일러 복소 평면을 모사합니다.
-        # feature_dim 공간의 절반은 Sin 축으로, 나머지 절반은 Cos 축으로 투영하여 위상 소멸 데드존을 제거합니다.
+        # Part 1의 인터록 통과를 전제로, feature_dim 공간의 절반은 Sin 축으로, 나머지 절반은 Cos 축으로 투영하여 위상 소멸 데드존을 제거합니다.
         half_dim = self.feature_dim // 2
         grid_axis = jnp.arange(half_dim, dtype=target_dtype) / float(half_dim)
         
@@ -113,7 +121,7 @@ class UpgradedSoftmaxBypassingDecoder:
         final_attention_rail_input = jnp.matmul(purified_guide_stream, field_wave_T)
         
         # [🛡️ BRANCHLESS MUX FIREWALL]
-        # 분기 예측 실패(Stall) 0% 마진을 위해 jnp.maximum primitive를 유지하되 역전파 미분 경로 보존
+        # 조건문 분기 예측 실패(Stall) 0% 마진을 위해 jnp.maximum primitive를 유지하되 역전파 미분 경로 보존
         sanitized_stream = jnp.maximum(final_attention_rail_input, 0.0)
         
         # [🌊 L2 NORM PARITY ENERGY CONSERVATION - 가속기 rsqrt 기계어 유도]
