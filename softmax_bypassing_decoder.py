@@ -6,14 +6,6 @@ File: softmax_bypassing_decoder.py
 [수리물리학적 철학 - 하드웨어 가속 및 역전파 학습 통합본]
 """
 
-# -*- coding: utf-8 -*-
-"""
-Homeostasis Spatial Bus - Advanced Softmax-Bypassing Wave Decoder
-File: softmax_bypassing_decoder.py
-
-[수리물리학적 철학 - 하드웨어 가속 및 역전파 학습 통합본]
-"""
-
 import jax
 import jax.numpy as jnp
 from functools import partial
