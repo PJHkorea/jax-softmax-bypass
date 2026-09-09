@@ -10,6 +10,17 @@ import jax.numpy as jnp
 from multi_head_wave_attention import MultiHeadWaveAttention
 
 def execute_e2e_test_bench():
+    # [고도화 포인트] 파이썬 메모리 계측 오차를 분쇄하기 위해 리눅스 커널 물리 메모리(VmRSS) 직접 스캔 함수 정의
+    def get_kernel_vm_rss() -> int:
+        try:
+            with open("/proc/self/status", "r") as f:
+                for line in f:
+                    if "VmRSS:" in line:
+                        return int(line.split()[1]) * 1024  # KB -> Byte 승격
+        except:
+            pass
+        return 0
+
     # ------------------------------------------------------------------------
     # [Step 1: 하드웨어 가속 검증용 하이퍼파라미터 및 더미 매니폴드 선언]
     # ------------------------------------------------------------------------
@@ -30,9 +41,13 @@ def execute_e2e_test_bench():
     q_init = jax.random.normal(key_q, (batch_size, seq_len, embed_dim), dtype=jnp.float32)
     k_init = jax.random.normal(key_k, (batch_size, seq_len, embed_dim), dtype=jnp.float32)
     v_init = jax.random.normal(key_v, (batch_size, seq_len, embed_dim), dtype=jnp.float32)
+    
     # ------------------------------------------------------------------------
     # [Step 2: 하이재킹 모듈 인스턴스화 및 자동 미분 타깃 손실함수 선언]
     # ------------------------------------------------------------------------
+    # 모듈 초기화 및 정적 자원 할당 전 커널 메모리 상태 기저 측정
+    memory_before = get_kernel_vm_rss()
+
     wave_attention_block = MultiHeadWaveAttention(
         embed_dim=embed_dim,
         num_heads=num_heads,
@@ -40,14 +55,25 @@ def execute_e2e_test_bench():
         alpha=alpha
     )
 
-    # 역전파 그라디언트 유동선 검증을 위한 가상 스칼라 손실(Loss) 함수 매핑
-    def loss_fn(q_tensor, k_tensor, v_tensor):
-        output_manifold = wave_attention_block(q_tensor, k_tensor, v_tensor)
-        # L2 NormParity 및 연속 미분 가능 공간 상의 스칼라 수축 복원
-        return jnp.mean(jax.lax.square(output_manifold))
+       # 역전파 그라디언트 유동선 검증을 위한 가상 스칼라 손실(Loss) 함수 매핑
+    # [고도화 포인트] 직렬화 복원 테스트를 유증하기 위해 모듈 블록을 동적으로 인입받도록 유연화
+    def build_loss_engine(target_block):
+        def loss_fn(q_tensor, k_tensor, v_tensor):
+            output_manifold = target_block(q_tensor, k_tensor, v_tensor)
+            # L2 NormParity 및 연속 미분 가능 공간 상상의 스칼라 수축 복원
+            return jnp.mean(jax.lax.square(output_manifold))
+        return jax.value_and_grad(loss_fn, argnums=(0, 1, 2))
 
-    # q, k, v 세 개의 입력 스트림 축 전체에 대해 동시에 미분 도함수 그래프 생성
-    grad_loss_engine = jax.value_and_grad(loss_fn, argnums=(0, 1, 2))
+    # ------------------------------------------------------------------------
+    # [★ 추가 고도화 PHASE 0: JAX PyTree 분산 SPMD 직렬화/역직렬화 인터록 완결 검증]
+    # ------------------------------------------------------------------------
+    print("\n[⚡ PHASE 0] JAX PyTree 구조적 직렬화 및 Bare-Metal 복원 무결성 검증...")
+    children, aux_data = wave_attention_block.tree_flatten()
+    reconstructed_block = MultiHeadWaveAttention.tree_unflatten(aux_data, children)
+    
+    # 복원된 인스턴스를 마스터 엔진으로 기용하여 하위 자동 미분 파이프라인 가동
+    grad_loss_engine = build_loss_engine(reconstructed_block)
+
     # ------------------------------------------------------------------------
     # [Step 3: XLA 워밍업 컴파일 및 런타임 수치 무결성 검증]
     # ------------------------------------------------------------------------
@@ -72,7 +98,7 @@ def execute_e2e_test_bench():
     print(f"🚀 순수 가속기 연산 레이턴시: {runtime_time:.4f} 초")
 
     # ------------------------------------------------------------------------
-    # [Step 4: 수치 해석적 안정성(NaN-Free) 단언문 검증]
+    # [Step 4: 수치 해석적 안정성(NaN-Free) 및 커널 자원 가드레일 단언문 검증]
     # ------------------------------------------------------------------------
     print("\n[📊 PHASE 3] 수치 해석적 안정성 및 그라디언트 유동선 정밀 전사...")
     
@@ -92,7 +118,17 @@ def execute_e2e_test_bench():
         grad_l2_norm = jnp.sqrt(jnp.sum(jax.lax.square(grad_tensor)))
         print(f"✅ 역방향 패스 그라디언트 전하량 확보 ({stream_name}): L2 Norm = {grad_l2_norm:.6f}")
 
-    print("\n🎉 [SUCCESS] 모든 하드웨어 가속 및 연속 미분 자동 미분 테스트를 완벽하게 통과했습니다!")
+    # [★ 추가 고도화 핵심 - OS 물리 메모리 지터 누수 차단 교차 단언]
+    final_total_alloc = get_kernel_vm_rss()
+    memory_jitter_amplitude = abs(final_total_alloc - memory_before)
+    print(f"├─ [인프라] 가동 전 선점 물리 자원 총량 : {memory_before} Byte")
+    print(f"├─ [인프라] 대용량 역전파 연산 후 자원 총량 : {final_total_alloc} Byte")
+    print(f"🚨 [결론] 서버 인프라 실제 물리 메모리 변동 진폭 : {memory_jitter_amplitude} Byte")
+    
+    # 가속기 내부 컴파일러의 일시적 캐시 할당 범위를 감안하여 64KB 페이지 크기 이내로 통제됨을 단언
+    assert memory_jitter_amplitude <= 65536, "[FATAL ERROR] 수리 오류: 분산 학습 런타임 도중 정적 자원 닫힌계 바운더리가 파괴되어 메모리 지터가 터졌습니다!"
+
+    print("\n🎉 [SUCCESS] 모든 하드웨어 가속, PyTree 복원 및 연속 미분 자동 미분 테스트를 완벽하게 통과했습니다!")
 
 if __name__ == "__main__":
     execute_e2e_test_bench()
