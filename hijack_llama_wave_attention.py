@@ -9,6 +9,11 @@ File: hijack_llama_wave_attention.py
 
 import torch
 import torch.nn as nn
+# [고도화 핵심 - 헤더 유실 패치] 하이브리드 FFI 가속 버스선의 단절을 막기 위해 마스터 가속 헤더 바인딩 인입
+import jax
+import jax.numpy as jnp
+from typing import Tuple, Any, Optional
+
 from multi_head_wave_attention import MultiHeadWaveAttention
 
 class CUDAInterfaceBridge:
@@ -33,14 +38,17 @@ class LlamaAttentionWaveHijacker(nn.Module):
         self.num_heads = legacy_attention_block.num_heads
         self.head_dim = legacy_attention_block.head_dim
         
+        # [고도화 포인트] 튜플 분산 컴파일러 예외를 격리하기 위해 메시 형상 인자 타입 정류 후 연동
+        mesh_target = mesh_shape if isinstance(mesh_shape, int) else mesh_shape[0]
         self.wave_engine = MultiHeadWaveAttention(
             embed_dim=self.hidden_size,
             num_heads=self.num_heads,
-            mesh_shape=mesh_shape,
+            mesh_shape=mesh_target,
             alpha=alpha
         )
 
-      def _torch_to_jax_zero_copy(self, torch_tensor: torch.Tensor) -> jax.Array:
+
+         def _torch_to_jax_zero_copy(self, torch_tensor: torch.Tensor) -> jax.Array:
         """[🏎️ ZERO-COPY HYBRID INTERLOCK] __cuda_array_interface__를 직접 추출하여 JAX 네이티브 뷰로 승격"""
         if not torch_tensor.is_cuda:
             raise ValueError(f"🚨 [CUDA Bridge Error] 파동 가속을 위해 PyTorch 텐서는 CUDA 위에 있어야 합니다. 현재: {torch_tensor.device}")
@@ -51,22 +59,30 @@ class LlamaAttentionWaveHijacker(nn.Module):
             
         raw_interface_spec = detached_tensor.__cuda_array_interface__
         adapter_capsule = CUDAInterfaceBridge(raw_interface_spec)
-        jax_array = jnp.asarray(adapter_capsule)
         
-        # 🛡️ JAX 비동기 연산 완료 시까지 Python GC 소멸 방어용 하드록킹
+        # [고도화 포인트] XLA의 컴파일러 최적화 분산 메모리 할당(Unified Memory) 트리거 유도를 위해 
+        # jnp.asarray 주소선 매핑 시 명시적 데이터타입 뷰(float32) 유지 규격 적용
+        jax_array = jnp.asarray(adapter_capsule, dtype=jnp.float32)
+        
+        # 🛡️ JAX 비동기 연산 완료 시까지 Python GC 소멸 방어용 하드록킹 컨텍스트 펜스 강화
         if hasattr(jax_array, "__dict__"):
             jax_array.__dict__["_FNG_V3_Pre_Rectified_KV_Bus_Fence"] = detached_tensor
         else:
+            # 해시 수명 주기가 꼬이는 현상을 컴파일러 파이프라인에서 원천 차단하기 위해 강제 동기화 락킹
             jax_array.block_until_ready()
             
         return jax_array
 
     def _jax_to_torch_zero_copy(self, jax_array: jax.Array, torch_device: torch.device) -> torch.Tensor:
         """[🏎️ REVERSE DLPACK BRIDGE] JAX 연산 결과를 메모리 복사 없이 파이토치 CUDA 레일로 복귀"""
+        # [고도화 포인트] DLPack 공유 컨테이너 추출 직전 가속기 하드웨어 단의 연산 전하량 수착 완결을 
+        # 보증하기 위해 block_until_ready() 동기화 배리어를 정밀 배치하여 레이스 컨디션을 완전히 파괴합니다.
+        jax_array.block_until_ready()
         dlpack_vessel = jax.dlpack.to_dlpack(jax_array)
         return torch.utils.dlpack.from_dlpack(dlpack_vessel).to(torch_device)
 
-    def forward(
+
+        def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
@@ -91,7 +107,8 @@ class LlamaAttentionWaveHijacker(nn.Module):
             mask_jax = self._torch_to_jax_zero_copy(attention_mask)
 
 
-               # ------------------------------------------------------------------------
+
+                    # ------------------------------------------------------------------------
         # [🌊 BACKEND EXECUTION - JAX XLA ENGINE RUNTIME]
         # ------------------------------------------------------------------------
         # 6세대 비동기 컨텍스트 펜스로 절연된 Q, K, V 주소선을 기반으로
@@ -118,7 +135,9 @@ def patch_llama_model_with_wave_attention(model: nn.Module, mesh_shape: int = 64
     
     # 모델 내부 아키텍처 토폴로지를 순회하며 레거시 디코더 블록 추적
     for name, module in model.named_modules():
-        if module.__class__.__name__ == "LlamaAttention":
+        # [고도화 포인트] HuggingFace 및 다양한 변형 구현체(FlashAttention 등)의 
+        # 클래스 명명 파편화 예외를 방어하기 위해 서브스트링 검사 가드 스캔을 집행합니다.
+        if "LlamaAttention" in module.__class__.__name__:
             # 경로 파싱을 통한 자식 속성 동적 세팅 부모 추적
             parent_name = ".".join(name.split(".")[:-1])
             child_name = name.split(".")[-1]
