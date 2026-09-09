@@ -23,37 +23,37 @@ XLA 분산 가속기 클러스터 환경에서 AI 모델 연산 최악의 자원
 - test_wave_attention.py: OS 물리 메모리 지터 및 자동 미분 도함수 전하량을 사증하는 통합 테스트 벤치(Test)
 
 -  spmd_sharding_lanes.py 이하 다이어그램 참조
+
 ```mermaid
-graph TD
-    classDef nodeStyle fill:#1e1e2e,stroke:#313244,stroke-width:2px,color:#cdd6f4,font-family:monospace;
-    classDef titleStyle fill:#89b4fa,stroke:#11111b,stroke-width:2px,color:#11111b,font-weight:bold,font-family:monospace;
-    classDef subTitleStyle fill:#fab387,stroke:#11111b,stroke-width:2px,color:#11111b,font-weight:bold,font-family:monospace;
-
-    %% Global Input
-    GI["[ 전역 인풋 4D 매니폴드 진입 ]"]:::titleStyle
-
-    %% Distribution Axes
-    DA_Batch["▼ (data 축 분산: Batch / N)"]:::subTitleStyle
-    DA_Head["▼ (model 축 분산: Heads / M)"]:::subTitleStyle
-
-    %% Accelerator Nodes
-    subgraph Cluster_Nodes [" "]
-        direction LR
-        
-        Node0["🚀 Accelerator Node (0, 0)<br><br>• Batch [0:B/4], Head [0:H/8] 선점<br>• Taylor / 왜도 인플레이스 정류<br>• SRAM 뱅크 충돌 0% 가속 적재"]:::nodeStyle
-        
-        Node1["🚀 Accelerator Node (0, 1)<br><br>• Batch [0:B/4], Head [H/8:2H/8]<br>• 독립 푸리에 직교 위상 평면 연사<br>• L2 NormParity 에너지 보존 전사"]:::nodeStyle
-    end
-
-    %% Connections
-    GI --> DA_Batch
-    GI --> DA_Head
-    DA_Batch --> Node0
-    DA_Head --> Node1
+flowchart TD
+    %% 전역 스타일 및 실리콘 테마 바인딩
+    classDef default fill:#1f2937,stroke:#374151,stroke-width:1px,color:#f9fafb;
+    classDef highlight fill:#2563eb,stroke:#3b82f6,stroke-width:2px,color:#ffffff;
+    classDef orange fill:#f97316,stroke:#ea580c,stroke-width:1px,color:#ffffff;
     
-    %% Communication Link
-    Node0 <--> |"◀─ 0ns 복사 제로 / 통신 락 0% ─▶"| Node1
+    %% [전역 인풋 4D 매니폴드 진입]
+    INPUT["[ 전역 인풋 4D 매니폴드 진입 ]<br>Shape: [Batch, NumHeads, SeqLen, HeadDim]"]:::highlight
 
-    %% Layout adjustments
-    style Cluster_Nodes fill:none,stroke:none;
+    %% [분산 배정 축 사상 가드레일]
+    DATA_SHARD["▼ (data 축 분산:<br>Batch / N)"]:::orange
+    MODEL_SHARD["▼ (model 축 분산:<br>Heads / M)"]:::orange
+
+    %% [물리 가속기 가동 노드 어레이]
+    NODE_00["🚀 Accelerator Node (0, 0)<br><br>• Batch [0:B/4], Head [0:H/8] 선점<br>• Taylor / 왜도 인플레이스 정류<br>• SRAM 뱅크 충돌 0% 가속 적재"]
+    NODE_01["🚀 Accelerator Node (0, 1)<br><br>• Batch [0:B/4], Head [H/8:2H/8] 선점<br>• 독립 푸리에 직교 위상 평면 연사<br>• L2 NormParity 에너지 보존 전사"]
+
+    %% [0ns 통신 프리미티브 배리어]
+    COMM_BARRIER["◀─ 0ns 복사 제로 / 통신 락 0% ─▶"]:::highlight
+
+    %% 텐서 주소선 라우팅 연결
+    INPUT --> DATA_SHARD
+    INPUT --> MODEL_SHARD
+    
+    DATA_SHARD --> NODE_00
+    MODEL_SHARD --> NODE_01
+    
+    %% 하드웨어 상호 인터록 링크
+    NODE_00 <==> COMM_BARRIER
+    COMM_BARRIER <==> NODE_01
 ```
+
