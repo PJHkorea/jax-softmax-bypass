@@ -10,6 +10,8 @@ import os
 import time
 import torch
 import gc
+# [고도화 포인트] JAX 비동기 파이프라인의 물리 연산 완료를 강제 고정하기 위해 마스터 헤더 바인딩 인입
+import jax
 from transformers import AutoConfig, AutoModelForCausalLM
 
 # 고도화 완료된 하이재커 레이어 및 글로벌 인젝터 인입
@@ -31,6 +33,14 @@ def measure_hardware_footprint(model, sequence_length: int, batch_size: int = 1)
     with torch.no_grad():
         _ = model(input_ids[:, :min(sequence_length, 128)])
     
+    # [★ 고도화 핵심 - 하이브리드 비동기 컨텍스트 동기화 배리어]
+    # 하이재킹 모듈 내부에서 작동 중인 JAX XLA 컴파일러 기계어 큐와 파이토치 CUDA 스트림 간의 
+    # 참조선 레이스 컨디션을 파괴하기 위해, 하드웨어 동기화 직전 JAX 가속기 연산 완료를 선제 래칭합니다.
+    try:
+        jax.effects_barrier()  # 전역 분산 Sharding 비동기 전하량 수착 완결 보증
+    except AttributeError:
+        pass
+    
     # JAX 백엔드 비동기 명령어 처리 마진 확보를 위한 하드웨어 동기화
     torch.cuda.synchronize()
     
@@ -38,6 +48,11 @@ def measure_hardware_footprint(model, sequence_length: int, batch_size: int = 1)
     start_time = time.perf_counter()
     with torch.no_grad():
         _ = model(input_ids)
+        
+    try:
+        jax.effects_barrier()
+    except AttributeError:
+        pass
     torch.cuda.synchronize()
     elapsed_time = time.perf_counter() - start_time
     
@@ -49,6 +64,7 @@ def measure_hardware_footprint(model, sequence_length: int, batch_size: int = 1)
     throughput = total_tokens / elapsed_time
     
     return peak_vram, throughput
+
 
 def run_scale_inversion_benchmark():
     # 실측 벤치마크 타깃 가중치 선언 (Meta LLaMA-3 8B)
@@ -89,6 +105,8 @@ def run_scale_inversion_benchmark():
     print("\n========================================================================")
     print("🧬 [🌊 HIJACKED RUNTIME] 2단계: 6세대 비동기 펜스 통합형 Wave-Attention 성능 측정")
     print("========================================================================")
+
+    
     # 동일 가중치 뼈대를 다시 로드한 후 런타임 심장 하이재킹 집행
     wave_model = AutoModelForCausalLM.from_config(config).half().to("cuda")
     wave_model = patch_llama_model_with_wave_attention(wave_model, mesh_shape=64, alpha=0.01)
