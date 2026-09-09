@@ -30,7 +30,9 @@ class MultiHeadWaveAttention:
         self.embed_dim = embed_dim
         self.num_heads = num_heads
         self.head_dim = embed_dim // num_heads
-        self.mesh_shape = mesh_shape
+        
+        # [고도화 포인트] 분산 환경(SPMD) 내부 컴파일러의 가변 튜플 타입 오참을 방지하기 위해 단일 정수형 명시 강제
+        self.mesh_shape = (mesh_shape, mesh_shape) if isinstance(mesh_shape, int) else tuple(mesh_shape)
         self.alpha = alpha
         self.hbar_eff = 1e-6
 
@@ -43,21 +45,22 @@ class MultiHeadWaveAttention:
 
         # 각 독립 헤드들이 서로 다른 파동 위상 평면을 점유하도록 3차원 정적 기저 텐서 배열 선점
         # XLA 컴파일러 배리어를 쳐서 HBM 장치 메모리 내에 물리적으로 고정(Freeze)합니다.
+        # [고도화 포인트] 상위 mesh_shape 인터록 전사에 맞추어 단일 차원 정수형 추출 바인딩
+        decoder_mesh_target = self.mesh_shape[0] if isinstance(self.mesh_shape, tuple) else self.mesh_shape
         self.decoders = [
-            UpgradedSoftmaxBypassingDecoder(mesh_shape=self.mesh_shape, feature_dim=self.head_dim, alpha=self.alpha)
+            UpgradedSoftmaxBypassingDecoder(mesh_shape=decoder_mesh_target, feature_dim=self.head_dim, alpha=self.alpha)
             for _ in range(self.num_heads)
         ]
         
         # PyTree 추적 성능을 위해 장치 내 단일 텐서 링버퍼 형태로 위상 축 통합 적재
-      
         self.vorticity_omega_mesh = jax.lax.stop_gradient(
             jnp.stack([decoder.vorticity_omega for decoder in self.decoders], axis=0)
         )
 
-    # ------------------------------------------------------------------------
+       # ------------------------------------------------------------------------
     # [★ JAX PyTree 규격 오차 0% 및 분산 SPMD 역직렬화 인터록 완결]
     # ------------------------------------------------------------------------
-    def tree_flatten(self) -> Tuple[Tuple[jax.Array], Tuple[int, int, int, int, float, float]]:
+    def tree_flatten(self) -> Tuple[Tuple[jax.Array], Tuple[int, int, int, Any, float, float]]:
         """
         XLA 컴파일러가 분산 장치 메모리(HBM) 트래킹을 놓치지 않도록 동적 텐서와 정적 상수를 격리 분리합니다.
         개별 디코더 인스턴스 배열 대신, 단일 통합 링버퍼인 vorticity_omega_mesh만 추적 대상으로 지정하여
@@ -78,7 +81,7 @@ class MultiHeadWaveAttention:
         return children, aux_data
 
     @classmethod
-    def tree_unflatten(cls, aux_data: Tuple[int, int, int, int, float, float], children: Tuple[jax.Array]) -> "MultiHeadWaveAttention":
+    def tree_unflatten(cls, aux_data: Tuple[int, int, int, Any, float, float], children: Tuple[jax.Array]) -> "MultiHeadWaveAttention":
         """
         [SPMD 정적 단언 크래시 결함 교정]
         분산 샤딩 환경에서 튜플이나 컴파일러 내부 타입으로 래핑 및 변형되어 들어올 수 있는
@@ -87,7 +90,12 @@ class MultiHeadWaveAttention:
         # 생성자 우회 매핑 인터록 가드 발동
         embed_dim_raw = int(aux_data[0])
         num_heads_raw = int(aux_data[1])
-        mesh_shape_raw = int(aux_data[3])
+        
+        # [고도화 포인트] mesh_shape가 복전 타임에 단일 값 혹은 튜플 구조로 깨져 들어와 발생하는 
+        # XLA 타입 미스매치를 방지하기 위해 타입 가드레일을 주입하여 안전하게 복원합니다.
+        mesh_shape_aux = aux_data[3]
+        mesh_shape_raw = (int(mesh_shape_aux[0]), int(mesh_shape_aux[1])) if isinstance(mesh_shape_aux, (tuple, list)) else (int(mesh_shape_aux), int(mesh_shape_aux))
+        
         alpha_raw = float(aux_data[4])
         
         # 객체 원형 뷰 복전 복원
@@ -104,14 +112,16 @@ class MultiHeadWaveAttention:
         
         # 내부 하위 디코더 객체 레이어 복원 정렬
         from core_formula.softmax_bypassing_decoder import UpgradedSoftmaxBypassingDecoder
+        decoder_mesh_target = obj.mesh_shape if isinstance(obj.mesh_shape, tuple) else obj.mesh_shape
         obj.decoders = [
-            UpgradedSoftmaxBypassingDecoder(mesh_shape=obj.mesh_shape, feature_dim=obj.head_dim, alpha=obj.alpha)
+            UpgradedSoftmaxBypassingDecoder(mesh_shape=decoder_mesh_target, feature_dim=obj.head_dim, alpha=obj.alpha)
             for _ in range(obj.num_heads)
         ]
         
         return obj
 
-    @partial(jax.jit, static_argnums=(0,))
+
+      @partial(jax.jit, static_argnums=(0,))
     def __call__(self, q: jax.Array, k: jax.Array, v: jax.Array, mask: Optional[jax.Array] = None) -> jax.Array:
         """
         [⚡ OPERATIONAL FUSION RUNTIME GATEWAY - 4D GEMM RE-LAYOUT]
@@ -164,7 +174,8 @@ class MultiHeadWaveAttention:
         # 레일 인터록 바인딩 준비 완료 상태로 4차원 매니폴드를 마감합니다.
         return self._execute_wave_integration(q_h, k_h, v_h)
 
-    def _execute_wave_integration(self, q_h: jax.Array, k_h: jax.Array, v_h: jax.Array) -> jax.Array:
+
+        def _execute_wave_integration(self, q_h: jax.Array, k_h: jax.Array, v_h: jax.Array) -> jax.Array:
         """
         [⚡ WAVE CONTRACTION & RECONSTRUCTION ENGINE]
         [Part 4: 파동 수축 무게중심 적분 및 최종 유클리드 출력 토폴로지 복원]
@@ -224,7 +235,7 @@ class MultiHeadWaveAttention:
         # context_vessel shape: [Batch, NumHeads, MeshShape, HeadDim] -> 완전히 고정된 선형 공간화 완료!
         context_vessel = jnp.matmul(k_wave, v_h)
 
-        # ------------------------------------------------------------------------
+                # ------------------------------------------------------------------------
         # [⚡ LAYER 2.8: Q-STREAM PARITY DECODING & TOPO RESTORATION]
         # ------------------------------------------------------------------------
         # 융합된 글로벌 위상 컨테이너로부터 Q 스트림을 활용해 고정밀 토큰 매니폴드를 디코딩 및 전개합니다.
@@ -233,7 +244,10 @@ class MultiHeadWaveAttention:
         Q_amplified = 1.0 + q_h + (0.5 * jax.lax.square(q_h))
         q_mean = jnp.mean(Q_amplified, axis=-1, keepdims=True)
         q_var = jnp.var(Q_amplified, axis=-1, keepdims=True) + self.hbar_eff
+        
+        # [고도화 포인트] 3부의 K 레일과 결을 일치시켜 rsqrt 단일 기계어로 제곱근 역수를 압착 연산합니다.
         recip_q_std = jax.lax.rsqrt(q_var)
+        
         norm_q_dev = (Q_amplified - q_mean) * recip_q_std
         q_skewness = jnp.mean(jax.lax.integer_pow(norm_q_dev, 3), axis=-1, keepdims=True)
         Q_rectified = Q_amplified - (self.alpha * q_skewness)
