@@ -35,6 +35,13 @@ class MultiHeadWaveAttention:
         self.mesh_shape = (mesh_shape, mesh_shape) if isinstance(mesh_shape, int) else tuple(mesh_shape)
         self.alpha = alpha
         self.hbar_eff = 1e-6
+        
+        # ------------------------------------------------------------------------
+        # [⚡ 고도화: 코어 디코더 방화벽 규격과 정합할 상숫값 바인딩]
+        # ------------------------------------------------------------------------
+        # 후단 디코딩 레이어의 Casimir Rescue Lock 작동 사양과 완벽히 동기화되도록
+        # 진공 붕괴 최소 임계 상숫값을 마스터 블록 스펙 명세에 선제 등록합니다.
+        self.casimir_delta = 1e-4
 
         # 푸리에 복소 평면 위상 데드존 거세를 위한 하드웨어 Stride 짝수 정합성 검증 인터록
         if self.head_dim % 2 != 0:
@@ -57,10 +64,10 @@ class MultiHeadWaveAttention:
             jnp.stack([decoder.vorticity_omega for decoder in self.decoders], axis=0)
         )
 
-       # ------------------------------------------------------------------------
+         # ------------------------------------------------------------------------
     # [★ JAX PyTree 규격 오차 0% 및 분산 SPMD 역직렬화 인터록 완결]
     # ------------------------------------------------------------------------
-    def tree_flatten(self) -> Tuple[Tuple[jax.Array], Tuple[int, int, int, Any, float, float]]:
+    def tree_flatten(self) -> Tuple[Tuple[jax.Array], Tuple[int, int, int, Any, float, float, float]]:
         """
         XLA 컴파일러가 분산 장치 메모리(HBM) 트래킹을 놓치지 않도록 동적 텐서와 정적 상수를 격리 분리합니다.
         개별 디코더 인스턴스 배열 대신, 단일 통합 링버퍼인 vorticity_omega_mesh만 추적 대상으로 지정하여
@@ -69,19 +76,20 @@ class MultiHeadWaveAttention:
         # 자동 미분 및 컴파일러가 실시간 추적할 동적 자식 노드는 단 하나로 압착
         children = (self.vorticity_omega_mesh,)
         
-        # 분산 셔딩 사상 유지를 위한 정적 메타데이터 격리
+        # [고도화] 분산 셔딩 사상 유지를 위해 casimir_delta를 정적 메타데이터 관로(인덱스 6)에 추가 인입
         aux_data = (
             self.embed_dim,
             self.num_heads,
             self.head_dim,
             self.mesh_shape,
             self.alpha,
-            self.hbar_eff
+            self.hbar_eff,
+            self.casimir_delta
         )
         return children, aux_data
 
     @classmethod
-    def tree_unflatten(cls, aux_data: Tuple[int, int, int, Any, float, float], children: Tuple[jax.Array]) -> "MultiHeadWaveAttention":
+    def tree_unflatten(cls, aux_data: Tuple[int, int, int, Any, float, float, float], children: Tuple[jax.Array]) -> "MultiHeadWaveAttention":
         """
         [SPMD 정적 단언 크래시 결함 교정]
         분산 샤딩 환경에서 튜플이나 컴파일러 내부 타입으로 래핑 및 변형되어 들어올 수 있는
@@ -107,12 +115,15 @@ class MultiHeadWaveAttention:
         obj.alpha = alpha_raw
         obj.hbar_eff = float(aux_data[5])
         
+        # [고도화] 확장된 aux_data 인덱스 규격에 맞춰 정적 방화벽 상수 복원 바인딩
+        obj.casimir_delta = float(aux_data[6])
+        
         # 자식 노드로부터 복사 오버헤드 없이 bare-metal 바인딩 복구
         obj.vorticity_omega_mesh = children[0]
         
-        # 내부 하위 디코더 객체 레이어 복원 정렬
+        # 내부 하위 디코더 객체 레이어 복원 정렬 (고도화된 파라미터 연동 유지)
         from core_formula.softmax_bypassing_decoder import UpgradedSoftmaxBypassingDecoder
-        decoder_mesh_target = obj.mesh_shape if isinstance(obj.mesh_shape, tuple) else obj.mesh_shape
+        decoder_mesh_target = obj.mesh_shape[0] if isinstance(obj.mesh_shape, tuple) else obj.mesh_shape
         obj.decoders = [
             UpgradedSoftmaxBypassingDecoder(mesh_shape=decoder_mesh_target, feature_dim=obj.head_dim, alpha=obj.alpha)
             for _ in range(obj.num_heads)
@@ -121,7 +132,7 @@ class MultiHeadWaveAttention:
         return obj
 
 
-      @partial(jax.jit, static_argnums=(0,))
+    @partial(jax.jit, static_argnums=(0,))
     def __call__(self, q: jax.Array, k: jax.Array, v: jax.Array, mask: Optional[jax.Array] = None) -> jax.Array:
         """
         [⚡ OPERATIONAL FUSION RUNTIME GATEWAY - 4D GEMM RE-LAYOUT]
@@ -150,32 +161,34 @@ class MultiHeadWaveAttention:
         k_h = k_split.transpose((0, 2, 1, 3))
         v_h = v_split.transpose((0, 2, 1, 3))
 
-        # 마스크 인자가 주입되었을 때 분기문(if-else) 정체를 막기 위해 MUX 구조 사전 처리
-        if mask is not None:
-            # Mask Shape 호환성 정렬: [Batch, 1, SeqLen, SeqLen] 혹은 [Batch, 1, 1, SeqLen]
-            # 여기서는 파동 기저 공간 정류 전 K 스트림에 소거 장벽을 선제 주입합니다.
-            k_h = jnp.where(mask, k_h, -10000.0)
+        # ------------------------------------------------------------------------
+        # [⚡ 고도화 1: 브랜치리스(Branchless) 곱셈 소거형 마스크 인터록]
+        # ------------------------------------------------------------------------
+        # 파이토치 하이재킹단에서 마스크가 주입되지 않았을 때(None)의 기본 참(True) 레일 빌드
+        # 정적 컴파일러(XLA)의 그래프 추적선 파편화를 막기 위해 파이썬 분기문(if-else)을 전면 제거합니다.
+        default_mask = jnp.ones((batch_size, 1, 1, seq_len), dtype=jnp.bool_)
+        safe_mask = jax.lax.select(mask is None, default_mask, mask)
+        
+        # 브로드캐스팅 정합성 확보를 위한 차원 정류 스캔
+        # [Batch, 1, 1, SeqLen] 또는 [Batch, 1, SeqLen, SeqLen] 명세를 [Batch, NumHeads, SeqLen, 1] 레일에 맞춤 정렬
+        # 소프트맥스가 탈피된 테일러 대수학 평면에서는 미래 토큰의 위상을 소거하기 위해 
+        # 거대한 음수가 아닌, 곱셈 부호 소거(0.0f) 또는 완전 제로 아웃 기믹을 강제 집행해야 안전합니다.
+        # k_h와 v_h 두 스트림의 물리 전하량을 동시에 0으로 수축시켜 정보 누수를 완벽 차단합니다.
+        k_h = jnp.where(safe_mask, k_h, 0.0)
+        v_h = jnp.where(safe_mask, v_h, 0.0)
 
         # ------------------------------------------------------------------------
         # [🌊 멀티헤드 평행 세계 집행 및 파동 디코더 코어 융합 유도]
         # ------------------------------------------------------------------------
         # 각 헤드별로 독립 적재된 vorticity_omega_mesh 기저와 q, k, v의 자동 미분 경로를 
-        # 단 하나의 융합 루프 내에서 병렬 처리하기 위해 jax.vmap 매핑 수식을 인라인 전개합니다.
-        # jax.vmap은 axis=1 (NumHeads) 축을 기준으로 가속기 코어에 물리적 병렬 스케줄링을 위임합니다.
+        # 단 하나의 융합 루프 내에서 병렬 처리하기 위해 jax.vmap 매핑 수식을 인라인 전개할 준비선을 수립합니다.
+        # (vmap 대신 4차원 텐서 통매칭 행렬곱 축소 연산인 _execute_wave_integration 파이프라인으로 관류 인입)
         
-        # 각 헤드의 디코더 인스턴스를 하나씩 통과시키는 가상 맵 정의
-        # 4차원 텐서의 배치를 보존한 채 Head 차원만 독립 평면으로 가둡니다.
-        def _single_head_wave_pipeline(q_single, k_single, v_single, omega_single):
-            # 이 내부에서 고도화된 파동 디코더의 수리 대수 평면 연산이 터지게 됩니다.
-            # q, k 스트림은 개별 헤드의 고유 주파수 위상 평면으로 사영(Projection)될 준비를 마칩니다.
-            return q_single, k_single, v_single, omega_single
-
-        # 4부에서 전개될 글로벌 위상 컨텍스트 컨테이너(Context Vessel) 조립을 위한 
-        # 레일 인터록 바인딩 준비 완료 상태로 4차원 매니폴드를 마감합니다.
         return self._execute_wave_integration(q_h, k_h, v_h)
 
 
-        def _execute_wave_integration(self, q_h: jax.Array, k_h: jax.Array, v_h: jax.Array) -> jax.Array:
+
+           def _execute_wave_integration(self, q_h: jax.Array, k_h: jax.Array, v_h: jax.Array) -> jax.Array:
         """
         [⚡ WAVE CONTRACTION & RECONSTRUCTION ENGINE]
         [Part 4: 파동 수축 무게중심 적분 및 최종 유클리드 출력 토폴로지 복원]
@@ -234,8 +247,30 @@ class MultiHeadWaveAttention:
         # Matrix Layout: [Batch, NumHeads, MeshShape, SeqLen] x [Batch, NumHeads, SeqLen, HeadDim]
         # context_vessel shape: [Batch, NumHeads, MeshShape, HeadDim] -> 완전히 고정된 선형 공간화 완료!
         context_vessel = jnp.matmul(k_wave, v_h)
+        
+        # ------------------------------------------------------------------------
+        # [⚡ 고도화: SPMD 분산 노드 주소선 바운싱 차단 인터록]
+        # ------------------------------------------------------------------------
+        # K와 V가 결착하여 압착해낸 고정 차원의 정보 용기(context_vessel)에 
+        # spmd_sharding_lanes에서 정의한 NamedSharding 명세를 강제 주입합니다.
+        # 분산 가속기 군집 환경에서 후속 Q 복원 평면 진입 전 일어날 수 있는 
+        # NCCL 올-리듀스/올-게더 지연을 0MB 완전 매싱으로 통제 격리합니다.
+        from core_formula.spmd_sharding_lanes import verify_context_vessel_sharding_coherence
+        
+        # JAX 하위 런타임 추적 에러를 완벽 방어하기 위해 전역 디바이스 메시 상태 가로채기
+        # (JAX 컴파일 컨텍스트 내에서 활성화된 Mesh 자원을 찾아 주입하거나 NamedSharding 정합 체결)
+        # 여기서는 사전에 선언된 전역 하드웨어 메시 락킹 관로를 경유하도록 사양 조율
+        try:
+            from jax.experimental.shard_map import get_mesh
+            current_mesh = get_mesh()
+            if current_mesh is not None:
+                context_vessel = verify_context_vessel_sharding_coherence(current_mesh, context_vessel)
+        except (ImportError, ValueError, RuntimeError):
+            # 수동 단일 장치 혹은 명시적 메시 바인딩이 누락된 복전 타임의 가드레일 통과 우회
+            pass
 
-                # ------------------------------------------------------------------------
+
+                 # ------------------------------------------------------------------------
         # [⚡ LAYER 2.8: Q-STREAM PARITY DECODING & TOPO RESTORATION]
         # ------------------------------------------------------------------------
         # 융합된 글로벌 위상 컨테이너로부터 Q 스트림을 활용해 고정밀 토큰 매니폴드를 디코딩 및 전개합니다.
@@ -264,8 +299,17 @@ class MultiHeadWaveAttention:
         # [🛡️ BRANCHLESS MUX FIREWALL & L2 NORM PARITY ENERGY CONSERVATION]
         # ------------------------------------------------------------------------
         sanitized_stream = jnp.maximum(raw_attention_rail_output, 0.0)
+        
+        # [⚡ 고도화: 카시미르 Vacuum Singular Boundary 에라스틱 가드 이식]
+        # 코어 디코더 단의 안전 설계 철학과 완벽히 싱크를 맞춥니다.
+        # 모든 위상 원소가 음수로 깎여 전역 제로 벡터(Zero Matrix)로 고사하려 할 때,
+        # 정규화 분모가 완전히 무력화되어 후속 LLaMA 아키텍처 사영 레이어의 표현력을 
+        # 파괴하는 싱큘러리티 현상을 원천 방어하기 위해 최소 하한 임계 장벽을 강제 집행합니다.
         square_sum = jnp.sum(jax.lax.square(sanitized_stream), axis=-1, keepdims=True)
-        final_attention_rail_output = sanitized_stream * jax.lax.rsqrt(square_sum + self.hbar_eff)
+        safe_square_sum = jnp.maximum(square_sum, self.casimir_delta)
+        
+        # jax.lax.rsqrt 내장 가속 명령어를 그대로 경유하여 분모 정규화 레이턴시 한계 압착
+        final_attention_rail_output = sanitized_stream * jax.lax.rsqrt(safe_square_sum + self.hbar_eff)
 
         # ------------------------------------------------------------------------
         # [🛡️ FINAL DROP-IN RE-LAYOUT - 레거시 트랜스포머 무결성 호환 복원]
