@@ -14,7 +14,7 @@ XLA 분산 가속기 클러스터 환경에서 AI 모델의 병목 중 하나인
 
 | 평가 항목 | 표준 소프트웨어 스 (Standard Softmax) | 본 파동 수학 프레임워크 (Wave-Attention Core) | 기술적 차이 |
 | :--- | :--- | :--- | :--- |
-| **공간 복잡도 (VRAM)** | $O(N^2)$ | $O(N)$ 선형 제어선 수렴 및 상수 공간화 | 중간캐시 퀄킹에서 OOM 크래시 영구 배제 |
+| **공간 복잡도 (VRAM)** | $O(N^2)$ | $O(N)$ 선형 제어선 수렴 및 상수 공간화 | 중간캐시 퀄킹에서 OOM 크래시 배제 |
 | **하드웨어 연산 큐** | Global Reduction Sync Lock 병목 | Tensor Core 내부 1블록 인라인 융합 (FMA) | 메모리 버스 락 해제, 토큰 생성 수율 증가를 노림 |
 | **프레임워크 도킹** | PyTorch 연동  | `__cuda_array_interface__` v3 Direct Ptr | 드라이버단 간 메모리 복사 비용 0MB (Zero-Copy) |
 | **수치 안정성 (NaN)** | 오버/언더플로우 발생 ($x \rightarrow -\infty, \infty$) | 3차 파동 필터 + 카시미르 Vacuum 락 | 파인튜닝 시 그라디언트 발산 감소를 노림 |
