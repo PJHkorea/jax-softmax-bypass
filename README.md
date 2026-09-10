@@ -141,3 +141,13 @@ jax-softmax-bypass/
 *  **어떻게 개선했을까요?**
     *   `apply_wave_attention_sharding_rules` 및 수착 용기에 `jax.lax.with_sharding_constraint` 기계어 펜스를 다이렉트로 결착했습니다.
     *   역전파 자동 미분 경로 전역에서 텐서의 물리적 디바이스 셔딩 뷰를 동결하여, 가속기 노드 간 불필요한 사본 복사 및 주소 바운싱을 회피 했습니다.
+
+---
+
+### 4. 구조적 FAQ (Architectural Trade-offs)
+
+* **Q1. 왜 시퀀스 축에 선형 점화식(CumSum)을 안 썼나요?**
+  * **A:** 순차적 의존성(RNN 병목)을 제거하여 XLA 컴파일러가 전체 시퀀스를 Tensor Core GEMM 레일 내 빠르게 인라인 융합(HLO Fusion)하도록 유도했습니다.
+
+* **Q2. 왜 코어(`__call__`) 내부에 4D 텐서 확장 매핑을 직접 안 넣었나요?**
+  * **A:** 외곽 `MultiHeadWaveAttention`과 완벽히 역할을 분담하여 컴파일 타임 차원 찢어짐(ConcretizationTypeError)을 차단하고 XLA의 기계어 병합 마진을 극대화시키려 했습니다.
