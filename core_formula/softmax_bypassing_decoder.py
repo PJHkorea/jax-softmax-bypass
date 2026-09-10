@@ -39,27 +39,42 @@ class UpgradedSoftmaxBypassingDecoder:
         self.alpha = alpha  # 비선형 댐핑 계수 상숫값
         self.hbar_eff = 1e-6  # 수치 발산 및 제로 디비전 방어용 완충 가드레일 상수
         
-        # [고도화 1: 푸리에 직교 기저(Sin/Cos) 완성을 위한 메쉬 축 선언]
+        # ------------------------------------------------------------------------
+        # [⚡ 고도화 1: 레거시 LLM 가중치 결착용 트랜스포머 표준 스케일 팩터 인입]
+        # ------------------------------------------------------------------------
+        # Softmax가 사라진 평면에서 Q, K 내적값이 테일러 급수를 무차별 인플레이션 시키지 않도록,
+        # 기존 모델의 head_dim 사양에 정합하는 1 / sqrt(d_k) 역수 스케일을 컴파일 상수로 고정합니다.
+        self.scale_factor = 1.0 / jnp.sqrt(float(self.feature_dim))
+        
+        # [⚡ 고도화 2: 카시미르 Vacuum Singular Boundary 선언]
+        # jnp.maximum(..., 0.0) 제로 고사 영역 진입 시, NaN 전파를 차단할 에라스틱 구조용 최소 임계값 바인딩
+        self.casimir_delta = 1e-4
+
+        # [고도화 3: 푸리에 직교 기저(Sin/Cos) 완성을 위한 메쉬 축 선언]
         # 역전파 시 그라디언트 흐름이 기저 축을 오염시키지 않도록 stop_gradient를 유지하되,
         # 정보 손실(Rank Collapse)을 물리적으로 차단하기 위해 이 주파수 축은 순방향/역방향 모두에서 고정 상수로 작용합니다.
         self.vorticity_omega = jax.lax.stop_gradient(
             jnp.linspace(-jnp.pi, jnp.pi, self.mesh_shape[0], dtype=jnp.float32)
         )
 
-       # ------------------------------------------------------------------------
+    # ------------------------------------------------------------------------
     # [★ JAX PyTree 규격 오차 0% 정적 동결 인터록 완성]
     # ------------------------------------------------------------------------
-    def tree_flatten(self) -> Tuple[Tuple[jax.Array], Tuple[Tuple[int, int], int, float, float]]:
+    def tree_flatten(self) -> Tuple[Tuple[jax.Array], Tuple[Tuple[int, int], int, float, float, float, float]]:
         """
         XLA 컴파일러가 장치 메모리(HBM) 트래킹을 놓치지 않도록 동적 텐서와 정적 상수를 완벽히 격리 분리합니다.
         역전파 자동 미분 경로에서도 이 격리 구조가 유지되어 그라디언트가 오염되지 않습니다.
         """
+        # 자동 미분 대상 추적용 가동 노드 (동적 배열)
         children = (self.vorticity_omega,)
-        aux_data = (self.mesh_shape, self.feature_dim, self.alpha, self.hbar_eff)
+        
+        # 고도화 상숫값(scale_factor, casimir_delta)을 정적 메타데이터 관로에 온전히 추가 격리
+        aux_data = (self.mesh_shape, self.feature_dim, self.alpha, self.hbar_eff, self.scale_factor, self.casimir_delta)
         return children, aux_data
 
-    @classmethod
-    def tree_unflatten(cls, aux_data: Tuple[Tuple[int, int], int, float, float], children: Tuple[jax.Array]) -> "UpgradedSoftmaxBypassingDecoder":
+
+       @classmethod
+    def tree_unflatten(cls, aux_data: Tuple[Tuple[int, int], int, float, float, float, float], children: Tuple[jax.Array]) -> "UpgradedSoftmaxBypassingDecoder":
         """
         역전파 자동 미분 그래프 빌드 시, 정적 메트릭스 차원이 단 1비트도 뒤틀리지 않도록 원형 그대로 뷰 복원합니다.
         """
@@ -68,13 +83,16 @@ class UpgradedSoftmaxBypassingDecoder:
         mesh_shape_raw = aux_data[0]
         mesh_init = mesh_shape_raw[0] if isinstance(mesh_shape_raw, tuple) else mesh_shape_raw
         
+        # Part 1에서 확장된 aux_data 인덱스 명세(4, 5)에 정확히 싱크 정합 매핑
         obj = cls(mesh_shape=int(mesh_init), feature_dim=int(aux_data[1]), alpha=float(aux_data[2]))
         obj.hbar_eff = float(aux_data[3])
+        obj.scale_factor = float(aux_data[4])
+        obj.casimir_delta = float(aux_data[5])
+        
         obj.vorticity_omega = children[0]
         return obj
 
-
-        @partial(jax.jit, static_argnums=(0,), donate_argnums=(1,))
+    @partial(jax.jit, static_argnums=(0,), donate_argnums=(1,))
     def __call__(self, clean_manifold_tensor: jax.Array) -> jax.Array:
         """
         [⚡ OPERATIONAL FUSION RUNTIME GATEWAY - TAYLOR-FOURIER INTEGRAL INVERSION]
@@ -85,9 +103,21 @@ class UpgradedSoftmaxBypassingDecoder:
         """
         target_dtype = clean_manifold_tensor.dtype
         
+        # ------------------------------------------------------------------------
+        # [⚡ 고도화 1: 입력단 스케일 정류 및 음수 마스크 폭발 클리핑 방화벽]
+        # ------------------------------------------------------------------------
+        # Step 1-1. 레거시 LLM 가중치 생태계의 스케일 장벽과 맞물리도록 입력 텐서 정류
+        X_scaled = clean_manifold_tensor * self.scale_factor
+        
+        # Step 1-2. 파이토치 단에서 유입되는 미래 토큰 소거용 음수 마스크(-10000.0)가 
+        # 후속 테일러 제곱항(0.5 * x^2)을 만나 플러스 수억대의 거대한 폭발 값으로 반전되는 것을 
+        # 원천 차단하기 위해, 하드웨어 MUX 레벨 하한선 클리핑을 인라인 융합합니다.
+        # (-50.0 미만의 값은 제곱되어도 2500 수준으로 가속기 범위 내에서 엄격히 통제됩니다.)
+        X_safe = jnp.maximum(X_scaled, -50.0)
+        
         # [🛡️ TAYLOR 2nd-ORDER AMPLIFICATION CORE]
         # 초월 지수함수 회로를 우회하여 ALU 내 1클록 만에 Fused Multiply-Add(FMA)로 완전히 병합
-        X_raw = clean_manifold_tensor
+        X_raw = X_safe
         X_squared = jax.lax.square(X_raw)
         X_amplified = 1.0 + X_raw + (0.5 * X_squared)
         
@@ -101,8 +131,9 @@ class UpgradedSoftmaxBypassingDecoder:
         # [고도화 포인트] jax.lax.rsqrt 프리미티브 가속 기계어를 분산 표준편차 역수 연산에 융합하여 
         # sqrt 후 reciprocal을 개별 처리하던 2-Cycle HLO 병목을 단 1클록으로 압착합니다.
         recip_std = jax.lax.rsqrt(spatial_var)
+
         
-        # 3차 모멘트 왜도 계산 파이프라인의 하드웨어 인라인 융합 유도
+              # 3차 모멘트 왜도 계산 파이프라인의 하드웨어 인라인 융합 유도
         normalized_deviation = (X_amplified - spatial_mean) * recip_std
         skewness = jnp.mean(jax.lax.integer_pow(normalized_deviation, 3), axis=-1, keepdims=True)
         
@@ -132,10 +163,19 @@ class UpgradedSoftmaxBypassingDecoder:
         # 조건문 분기 예측 실패(Stall) 0% 마진을 위해 jnp.maximum primitive를 유지하되 역전파 미분 경로 보존
         sanitized_stream = jnp.maximum(final_attention_rail_input, 0.0)
         
+        # ------------------------------------------------------------------------
+        # [⚡ 고도화 3: 카시미르 Vacuum Singular Boundary 및 Elastic Rescue Lock]
+        # ------------------------------------------------------------------------
+        # 만약 sanitized_stream 안의 모든 위상 원소가 음수로 깎여 전역 0(Zero Matrix)이 되면,
+        # square_sum이 완전히 무너져 후속 언어 모델 백본(o_proj 등)의 표현력이 영구 고사합니다.
+        # 이를 막기 위해 L2 놈 분모 정규화 직전, 카시미르 진공 가드 임계치인 casimir_delta를 주입하여
+        # 최소한의 잔차 정합 에너지 밀도를 물리적으로 수호합니다.
+        square_sum = jnp.sum(jax.lax.square(sanitized_stream), axis=-1, keepdims=True)
+        safe_square_sum = jnp.maximum(square_sum, self.casimir_delta)
+        
         # [🌊 L2 NORM PARITY ENERGY CONSERVATION - 가속기 rsqrt 기계어 유도]
         # jax.lax.rsqrt 내장 가속 기계어를 그대로 경유하여 분모 정규화 레이턴시 한계 압착
-        square_sum = jnp.sum(jax.lax.square(sanitized_stream), axis=-1, keepdims=True)
-        final_attention_rail_output = sanitized_stream * jax.lax.rsqrt(square_sum + self.hbar_eff)
+        final_attention_rail_output = sanitized_stream * jax.lax.rsqrt(safe_square_sum + self.hbar_eff)
         
         # [학습 최적화 포인트 2] 역전파 학습 그래프 파괴의 원인이던 stop_gradient 가드레일을 완전히 전면 거세합니다.
         # 이로 인해 이 레이어 하단 및 상단 전체 커널의 파라미터들이 유기적으로 그라디언트를 공유하며 학습이 가능해집니다.
