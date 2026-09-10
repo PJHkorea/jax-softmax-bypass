@@ -83,13 +83,13 @@ flowchart LR
 
 jax-softmax-bypass/
 ├── core_formula/
-│   ├── softmax_bypassing_decoder.py # FMA Taylor 2차 다항식 우회 및 jax.lax.rsqrt 가속 대수학 코어
-│   └── spmd_sharding_lanes.py       # [2차원 메시] data(배치) 축 및 model(헤드) 축 분산 샤딩 통제실
-├── hijack_llama_wave_attention.py  # __cuda_array_interface__ v3 기반 0ns 파이토치-JAX 무복사 FFI 브릿지
-├── multi_head_wave_attention.py   # O(N^2)을 거세하고 K-V 파동 공간 수착을 집행하는 선형 멀티헤드 블록
-├── test_wave_attention.py          # [수치 검증] jax.value_and_grad 역전파 NaN 미분 그래프 전수 조사 벤치
-├── benchmark_llama_wave.py         # [실측 프로파일] Meta LLaMA-3 FP16의 32K 컨텍스트 VRAM 세이빙률 프로파일러
-└── README.md                       # 분산 라우팅 및 물리 가속기 노드 어레이 시각화가 결착된 헌법 백서
+│   ├── softmax_bypassing_decoder.py 
+│   └── spmd_sharding_lanes.py      
+├── hijack_llama_wave_attention.py  
+├── multi_head_wave_attention.py   
+├── test_wave_attention.py          
+├── benchmark_llama_wave.py        
+└── README.md                      
 
 ```
 
