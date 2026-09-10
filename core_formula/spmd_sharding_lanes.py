@@ -46,12 +46,19 @@ def apply_wave_attention_sharding_rules(global_mesh: Mesh, q: jax.Array, k: jax.
     # XLA 전역 네임스페이스 통제 명세서 합성
     sharding_rule = NamedSharding(global_mesh, attention_input_spec)
     
-    # 장치 HBM 포인터 주소선을 무복사(Zero-Copy)로 가로채어 전역 물리 샤딩 뷰로 강제 승격
-    q_sharded = jax.device_put(q, sharding_rule)
-    k_sharded = jax.device_put(k, sharding_rule)
-    v_sharded = jax.device_put(v, sharding_rule)
+    # ------------------------------------------------------------------------
+    # [⚡ 고도화: jax.lax.with_sharding_constraint 컴파일러 제약식 유도]
+    # ------------------------------------------------------------------------
+    # 단순히 jax.device_put으로 밀어 넣는 방식은 순방향에서는 안전할지 몰라도,
+    # 역전파(Backpropagation) 자동 미분 도함수 그래프가 생성될 때 
+    # XLA 컴파일러가 장치 분산 트래킹 배리어를 놓쳐 ConcretizationTypeError 크래시를 유발할 수 있습니다.
+    # 주소선 포인터를 가로챔과 동시에 물리 샤딩 제약식을 강제 주입하여 컴파일 최적화 라인을 동결합니다.
+    q_sharded = jax.lax.with_sharding_constraint(q, sharding_rule)
+    k_sharded = jax.lax.with_sharding_constraint(k, sharding_rule)
+    v_sharded = jax.lax.with_sharding_constraint(v, sharding_rule)
     
     return q_sharded, k_sharded, v_sharded
+
 
 def verify_context_vessel_sharding_coherence(global_mesh: Mesh, context_vessel: jax.Array) -> jax.Array:
     """
@@ -64,4 +71,13 @@ def verify_context_vessel_sharding_coherence(global_mesh: Mesh, context_vessel: 
     vessel_spec = P('data', 'model', None, None)
     vessel_sharding = NamedSharding(global_mesh, vessel_spec)
     
-    return jax.device_put(context_vessel, vessel_sharding)
+    # ------------------------------------------------------------------------
+    # [⚡ 고도화: 역전파 경로 전하량 보존용 HLO Sharding Constraint 강제 결착]
+    # ------------------------------------------------------------------------
+    # 파동 디코더 코어에서 Q 스트림과 매칭되어 유클리드 토폴로지를 디코딩해내기 전,
+    # context_vessel이 분산 노드 메모리 풀 사이에서 원치 않게 재배치(Resharding)되거나
+    # 복사본 파편을 형성하는 Latency 병목을 원천 봉쇄합니다.
+    # jax.device_put 대신 컴파일타임 제약식 펜스를 쳐서 O(1) 고정 스펙을 완벽하게 록킹합니다.
+    vessel_locked = jax.lax.with_sharding_constraint(context_vessel, vessel_sharding)
+    
+    return vessel_locked
