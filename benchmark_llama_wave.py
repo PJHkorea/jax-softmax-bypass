@@ -29,9 +29,15 @@ def measure_hardware_footprint(model, sequence_length: int, batch_size: int = 1)
     # 3. 기저 VRAM 점유량(정적 가중치 영역 제외 순수 활성화 맵 사양) 측정 준비
     torch.cuda.reset_peak_memory_stats()
     
-    # Warmup 실행을 통해 가속기 내부 명령어 큐 파이프라인 정렬
+    # ------------------------------------------------------------------------
+    # [⚡ 고도화 1: JIT 컴파일 래그 소산을 위한 실전형 타깃 스케일 웜업 결착]
+    # ------------------------------------------------------------------------
+    # 기존 고정 128 슬라이싱 웜업은 실제 런타임 연산인 sequence_length 진입 시 
+    # XLA가 새로운 크기의 정적 연산 그래프를 그리게 만들어 강제 JIT 컴파일 지연을 유발했습니다.
+    # 본 연산과 완전히 동일한 4차원 텐서 레이아웃으로 웜업을 집행하여 컴파일 오버헤드를 
+    # 계측 타임라인 외부로 영구 출각(소산)시킵니다.
     with torch.no_grad():
-        _ = model(input_ids[:, :min(sequence_length, 128)])
+        _ = model(input_ids)
     
     # [★ 고도화 핵심 - 하이브리드 비동기 컨텍스트 동기화 배리어]
     # 하이재킹 모듈 내부에서 작동 중인 JAX XLA 컴파일러 기계어 큐와 파이토치 CUDA 스트림 간의 
@@ -43,6 +49,13 @@ def measure_hardware_footprint(model, sequence_length: int, batch_size: int = 1)
     
     # JAX 백엔드 비동기 명령어 처리 마진 확보를 위한 하드웨어 동기화
     torch.cuda.synchronize()
+    
+    # ------------------------------------------------------------------------
+    # [⚡ 고도화 2: 기저 피크 메모리 통계선 재초기화 인터록]
+    # ------------------------------------------------------------------------
+    # 앞선 웜업 단계에서 순수 JIT 컴파일 그래프 적재용으로 일시 점유되었던 
+    # 하드웨어 HBM 자원 마진을 측정 레일에서 지워버리기 위해 피크 통계를 재정류합니다.
+    torch.cuda.reset_peak_memory_stats()
     
     # 4. 본 추론 연산 집행 및 정밀 시간 계측
     start_time = time.perf_counter()
@@ -92,6 +105,8 @@ def run_scale_inversion_benchmark():
     for scale in context_scales:
         try:
             print(f"🔄 레거시 Softmax 컨텍스트 길이 [{scale} Token] 스트레스 주입...")
+            # [보정 확인] 파트 1의 고도화된 계측 함수로 진입하며, 
+            # 각 scale 단위로 JIT 컴파일러 래그가 완벽히 절연된 청정 활성화 VRAM/TPS를 추출합니다.
             vram, tps = measure_hardware_footprint(vanilla_model, scale)
             vanilla_results[scale] = (vram, tps)
             print(f" ├─ 피크 VRAM 점유량 : {vram:.2f} MB")
@@ -101,19 +116,28 @@ def run_scale_inversion_benchmark():
             if "out of memory" in str(e).lower():
                 print(f"💀 [OOM CRASH] 레거시 Softmax가 {scale} 구간에서 메모리 폭발로 침몰했습니다.")
                 vanilla_results[scale] = (float('inf'), 0.0)
+                
+                # ------------------------------------------------------------------------
+                # [⚡ 고도화: OOM 유발 활성화 맵 강제 인프라 해제 배리어]
+                # ------------------------------------------------------------------------
+                # 바닐라 파이트가 메모리 한계를 견디지 못하고 폭발할 때 발생한 
+                # 파편화 오염 및 데드락 래그가 가속기 캐시 할당자에 누수 잔차로 남지 않도록
+                # 즉각적인 닫힌계 청소 프로토콜을 선제 호출하여 인터페이스 붕괴를 영구 방어합니다.
+                torch.cuda.empty_cache()
+                gc.collect()
                 break
             else:
                 raise e
+
             
-    # [🛡️ HBM 닫힌계 청정 수호 프로토콜]
+       # [🛡️ HBM 닫힌계 청정 수호 프로토콜]
     # 바닐라 모델 측정 라운드가 끝나는 즉시 메모리 풀에서 가중치를 강제 출각하고
     # 캐시 연쇄 비우기를 주입하여 후속 파동 모델 측정 평면에 잔차 간섭을 원천 차단합니다.
     del vanilla_model
     torch.cuda.empty_cache()
     gc.collect()
 
-
-        print("\n========================================================================")
+    print("\n========================================================================")
     print("🧬 [🌊 HIJACKED RUNTIME] 2단계: 6세대 비동기 펜스 통합형 Wave-Attention 성능 측정")
     print("========================================================================")
     
@@ -127,6 +151,8 @@ def run_scale_inversion_benchmark():
     for scale in context_scales:
         try:
             print(f"🔄 하이재킹 파동 레일 컨텍스트 길이 [{scale} Token] 스트레스 주입...")
+            # [보정 확인] 파트 1의 고도화된 계측 함수로 진입하며, 
+            # 각 scale 단위로 JIT 컴파일러 래그가 완벽히 절연된 청정 활성화 VRAM/TPS를 추출합니다.
             vram, tps = measure_hardware_footprint(wave_model, scale)
             wave_results[scale] = (vram, tps)
             print(f" ├─ 피크 VRAM 점유량 : {vram:.2f} MB")
@@ -145,7 +171,6 @@ def run_scale_inversion_benchmark():
     print(f"{'Context':<10} | {'Softmax VRAM':<14} | {'Wave VRAM':<12} | {'VRAM Saving':<13} | {'Throughput Boost':<16}")
     print("-" * 75)
 
-    
     for scale in context_scales:
         v_vram, v_tps = vanilla_results.get(scale, (float('inf'), 0.0))
         w_vram, w_tps = wave_results.get(scale, (float('inf'), 0.0))
@@ -173,3 +198,4 @@ def run_scale_inversion_benchmark():
 
 if __name__ == "__main__":
     run_scale_inversion_benchmark()
+
