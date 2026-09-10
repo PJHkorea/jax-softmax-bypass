@@ -15,6 +15,11 @@ import jax.numpy as jnp
 from typing import Tuple, Any, Optional
 
 from multi_head_wave_attention import MultiHeadWaveAttention
+# ------------------------------------------------------------------------
+# [⚡ 고도화: 분산 가속기 군집 토폴로지용 글로벌 하드웨어 메시 라인 인입]
+# ------------------------------------------------------------------------
+# 우리가 앞서 분산 헌법을 세워둔 core_formula 패키지로부터 전전 단계 통제실 명세를 호출합니다.
+from core_formula.spmd_sharding_lanes import establish_global_hardware_sharding_lanes
 
 class CUDAInterfaceBridge:
     """__cuda_array_interface__ v3 프로토콜을 통과시키기 위한 가속기 주소선 어댑터."""
@@ -46,9 +51,34 @@ class LlamaAttentionWaveHijacker(nn.Module):
             mesh_shape=mesh_target,
             alpha=alpha
         )
+        
+        # ------------------------------------------------------------------------
+        # [⚡ 고도화: 글로벌 분산 가속기 메시 인프라 런타임 하드락킹 고정]
+        # ------------------------------------------------------------------------
+        # 하이재커가 다차원 토큰 주소선을 가로채자마자 SPMD 샤딩 룰을 즉시 유도할 수 있도록
+        # 대규모 분산 학습 환경(FSDP, 텐서 모델 병렬 등)에 호환되는 하드웨어 격자 메시 구조를 선점 선포합니다.
+        # (기본 데이터 병렬 4개 노드, 모델 파티션 8개 분할 기본 사양 바인딩 - 환경에 따라 동적 조율 가능)
+        try:
+            # JAX 컴파일러 콘텍스트 상에 이미 활성화된 분산 메시 구조가 있는지 확인 후,
+            # 없을 시 베어메탈 물리 소켓 사상에 맞춰 디바이스 메시를 실시간 록킹합니다.
+            from jax.experimental.shard_map import get_mesh
+            active_mesh = get_mesh()
+            if active_mesh is not None:
+                self.global_hardware_mesh = active_mesh
+            else:
+                # 가용 디바이스 상태 및 노드 토폴로지 요구량에 정합하는 하드웨어 메시 라인 빌드
+                total_devices = len(jax.devices())
+                # 32개 미만의 노드에서는 가용한 축 비율로 스케일 수축 유도 가드레일 작동
+                if total_devices >= 32:
+                    self.global_hardware_mesh = establish_global_hardware_sharding_lanes(num_data_replicas=4, num_model_partitions=8)
+                else:
+                    self.global_hardware_mesh = establish_global_hardware_sharding_lanes(num_data_replicas=1, num_model_partitions=total_devices)
+        except Exception:
+            # 단일 GPU 디버깅 및 명시적 분산 노드 예외 국면 통과 우회선
+            self.global_hardware_mesh = None
 
 
-         def _torch_to_jax_zero_copy(self, torch_tensor: torch.Tensor) -> jax.Array:
+          def _torch_to_jax_zero_copy(self, torch_tensor: torch.Tensor) -> jax.Array:
         """[🏎️ ZERO-COPY HYBRID INTERLOCK] __cuda_array_interface__를 직접 추출하여 JAX 네이티브 뷰로 승격"""
         if not torch_tensor.is_cuda:
             raise ValueError(f"🚨 [CUDA Bridge Error] 파동 가속을 위해 PyTorch 텐서는 CUDA 위에 있어야 합니다. 현재: {torch_tensor.device}")
@@ -81,8 +111,7 @@ class LlamaAttentionWaveHijacker(nn.Module):
         dlpack_vessel = jax.dlpack.to_dlpack(jax_array)
         return torch.utils.dlpack.from_dlpack(dlpack_vessel).to(torch_device)
 
-
-        def forward(
+    def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
@@ -102,13 +131,40 @@ class LlamaAttentionWaveHijacker(nn.Module):
         k_jax = self._torch_to_jax_zero_copy(k_states)
         v_jax = self._torch_to_jax_zero_copy(v_states)
         
+        # ------------------------------------------------------------------------
+        # [⚡ 고도화 1: 분산 가속기 군집 토폴로지용 SPMD 샤딩 제약식 주입]
+        # ------------------------------------------------------------------------
+        # 단순히 텐서를 JAX 배열로 승격시키는 것에 그치지 않고, 대규모 분산 클러스터 환경에서 
+        # 자동 미분 도함수 그래프가 찢어지지 않도록 앞서 정립한 물리 샤딩 사물쇠를 체결합니다.
+        # 단일 장치 디버깅 환경(self.global_hardware_mesh is None)에서도 크래시가 없도록 인터록 처리합니다.
+        if self.global_hardware_mesh is not None:
+            from core_formula.spmd_sharding_lanes import apply_wave_attention_sharding_rules
+            q_jax, k_jax, v_jax = apply_wave_attention_sharding_rules(self.global_hardware_mesh, q_jax, k_jax, v_jax)
+        
+        # ------------------------------------------------------------------------
+        # [⚡ 고도화 2: 파이토치 attention_mask 오염 정류 및 불형(Boolean) 뷰 승격]
+        # ------------------------------------------------------------------------
         mask_jax = None
         if attention_mask is not None:
-            mask_jax = self._torch_to_jax_zero_copy(attention_mask)
+            # 파이토치 레일에서 유입되는 미래 토큰 소거용 마스크는 -10000.0 같은 큰 음수 수치를 지닐 수 있습니다.
+            # 앞서 우리가 마스터 블록 단에서 고도화한 jnp.where(safe_mask, ...) 제로 아웃 대수 평면과 
+            # 완벽히 정합하도록, 최외곽 게이트 단에서 0 미만의 값(소거 영역)을 탐지하여 청정 불형(Boolean)으로 강제 변환합니다.
+            # (원래 가려져야 하는 위치는 False, 유효한 토큰 위치는 True 스펙으로 매핑 정류)
+            clean_bool_mask = (attention_mask >= 0.0)
+            mask_jax = self._torch_to_jax_zero_copy(clean_bool_mask)
+            
+            # 마스크 텐서 역시 분산 가속기 메시 규격과 정합하도록 샤딩 규칙 명세 전사
+            if self.global_hardware_mesh is not None:
+                from jax.sharding import NamedSharding, PartitionSpec as P
+                # [Batch, 1, 1, SeqLen] 또는 [Batch, 1, SeqLen, SeqLen] 레이아웃에 맞춰 'data' 축 분산 바인딩
+                mask_spec = P('data', None, None, None) if attention_mask.ndim == 4 else P('data', None, None)
+                mask_sharding = NamedSharding(self.global_hardware_mesh, mask_spec)
+                mask_jax = jax.lax.with_sharding_constraint(mask_jax, mask_sharding)
 
 
 
-                    # ------------------------------------------------------------------------
+
+                      # ------------------------------------------------------------------------
         # [🌊 BACKEND EXECUTION - JAX XLA ENGINE RUNTIME]
         # ------------------------------------------------------------------------
         # 6세대 비동기 컨텍스트 펜스로 절연된 Q, K, V 주소선을 기반으로
@@ -133,6 +189,14 @@ def patch_llama_model_with_wave_attention(model: nn.Module, mesh_shape: int = 64
     """
     hijacked_count = 0
     
+    # ------------------------------------------------------------------------
+    # [⚡ 고도화: 글로벌 몽키 패치 결착 전 인프라 토폴로지 형상 사전 정류]
+    # ------------------------------------------------------------------------
+    # 분산 클러스터(SPMD) 환경의 가속기 메시 셰이프가 단일 정수 혹은 튜플 형태 등으로 
+    # 난립하여 하위 MultiHeadWaveAttention 생성자 내부에서 예외를 터뜨리지 않도록 
+    # 최외곽 패치 게이트 단에서 정적 규격을 명시적으로 가드 정류합니다.
+    mesh_target = mesh_shape if isinstance(mesh_shape, int) else int(mesh_shape[0])
+    
     # 모델 내부 아키텍처 토폴로지를 순회하며 레거시 디코더 블록 추적
     for name, module in model.named_modules():
         # [고도화 포인트] HuggingFace 및 다양한 변형 구현체(FlashAttention 등)의 
@@ -144,10 +208,12 @@ def patch_llama_model_with_wave_attention(model: nn.Module, mesh_shape: int = 64
             
             parent_module = model.get_submodule(parent_name) if parent_name else model
             
-            # 레거시 가중치를 완벽하게 이식받은 파동 하이재커 레이어로 가속기 심장 실시간 교체
-            hijacker_layer = LlamaAttentionWaveHijacker(module, mesh_shape=mesh_shape, alpha=alpha)
+            # 레거시 가중치와 투영 레이어(q, k, v, o_proj)를 완벽하게 이식받은 
+            # 고도화 파동 하이재커 레이어로 가속기 심장 실시간 원치 복사 교체
+            hijacker_layer = LlamaAttentionWaveHijacker(module, mesh_shape=mesh_target, alpha=alpha)
             setattr(parent_module, child_name, hijacker_layer)
             hijacked_count += 1
             
     print(f"🧬 [HIJACK SUCCESS] 총 {hijacked_count}개의 LLaMA 레거시 Softmax 어텐션 레이어가 'Wave-Attention' 레일로 교체되었습니다.")
     return model
+
