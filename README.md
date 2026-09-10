@@ -28,6 +28,8 @@ XLA 분산 가속기 클러스터 환경에서 AI 모델의 병목 중 하나인
 
 - test_wave_attention.py: OS 물리 메모리 지터 및 자동 미분 도함수 전하량을 사증하는 통합 테스트 벤치(Test)
 
+- benchmark_llama_wave.py: Meta LLaMA-3 FP16 백본의 32K 컨텍스트 VRAM 절감률을 실측하는 최종 스케일 프로파일러(Benchmark)
+
 - core_formula/softmax_bypassing_decoder.py: 테일러 2차식 우회, 왜도 소산 필터, 오일러 직교 기저, 카시미르 Vacuum 락의 수리적 수립 완결.
 
 - core_formula/spmd_sharding_lanes.py: with_sharding_constraint 펜스를 통한 분산 자동 미분 도함수 메모리 찢어짐 차단 / 다이어그램 참조
