@@ -1,5 +1,3 @@
-## Target Architectures: LLaMA & Gemma
-
 ## Softmax-Bypassing Wave Decoder (`jax-softmax-bypass`)
 
 This repository serves as a **Proof-of-Concept (PoC)** architectural framework designed to bypass the transcendental exponential function ($e^x$) bottlenecks of Softmax operations inside distributed XLA accelerator clusters. By factorizing activation trajectories into a single-pass 2nd-order Taylor polynomial FMA (Fused Multiply-Add) algebraic plane, this framework deploys four branchless, closed-system integrated acceleration engines to rigidly confine numerical divergence leaks within deterministic physical boundary conditions.
@@ -9,6 +7,26 @@ This repository serves as a **Proof-of-Concept (PoC)** architectural framework d
 Standard Transformer Softmax operations require calculating global row-wise reduction aggregates (sums and maximums). Consequently, even after high-speed on-chip register calculations terminate, the system cannot release the memory bus, creating severe hardware synchronization barriers. This mechanism triggers HBM (High Bandwidth Memory) bandwidth bottlenecks and forces accelerator execution units to waste cycles in an idle state. 
 
 To overcome this infrastructure limitation, this framework alters the underlying mathematical apparatus into a configuration optimized for algebraic kernel flattening. Without introducing any hardware modifications, this pure architectural transformation maximizes computing density and hardware throughput efficiency under massive long-context workloads.
+
+## Softmax-Bypassing Wave Decoder ( jax-softmax-bypass )
+
+This repository serves as a **Proof-of-Concept (PoC)** architectural framework designed to bypass... (기존 본문 타이틀)
+
+---
+
+### 🎯 Target Architectures & Silicon-Tier Gateway
+
+This framework targets **Static Dense Transformer** layouts with zero dynamic routing overhead. The compiler fences and $O(1)$ constant caches are strictly hardware-locked to support the following backbone infrastructures:
+
+*   **Meta LLaMA Family** (LLaMA-2, LLaMA-3, LLaMA-3.1) $\rightarrow$ [`core_formula/spmd_sharding_lanes.py`](./core_formula/spmd_sharding_lanes.py)
+*   **Google Gemma Family** (Gemma, Gemma-2) $\rightarrow$ [`bypass_rectifiers/taylor_glu.py`](./bypass_rectifiers/taylor_glu.py)
+
+> ⚠️ **Out-of-Scope Notice (Mixture-of-Experts):** 
+> Mixture-of-Experts (MoE) architectures (e.g., Mixtral, DeepSeek) are explicitly out-of-scope for the core engine due to dynamic token routing and variable tensor ranks that fracture static compiler tracing. 
+> 
+> For expanding this framework into MoE-class backbones without triggering XLA re-compilation, please check our isolated experimental blueprint at [`examples/moe_router_blueprint.py`](./examples/moe_router_blueprint.py) and read the accompanying [`docs/EXTENSION_GUIDE.md`](./docs/EXTENSION_GUIDE.md).
+
+---
 
 
 ---
