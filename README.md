@@ -1,3 +1,5 @@
+## Target Architectures: LLaMA & Gemma
+
 ## Softmax-Bypassing Wave Decoder (`jax-softmax-bypass`)
 
 This repository serves as a **Proof-of-Concept (PoC)** architectural framework designed to bypass the transcendental exponential function ($e^x$) bottlenecks of Softmax operations inside distributed XLA accelerator clusters. By factorizing activation trajectories into a single-pass 2nd-order Taylor polynomial FMA (Fused Multiply-Add) algebraic plane, this framework deploys four branchless, closed-system integrated acceleration engines to rigidly confine numerical divergence leaks within deterministic physical boundary conditions.
