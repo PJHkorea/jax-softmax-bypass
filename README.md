@@ -178,7 +178,7 @@ jax-softmax-bypass/
 
 ---
 
-#### 추가 고도화 (이유 : 소프트맥스 한가지만 우회로는 부족하다.)
+#### 1차 추가 고도화 (이유 : 소프트맥스 한가지만 우회로는 부족하다.)
 
 <details open>
 <summary><b>[고도화 5] HBM 버스 락 거세 및 레지스터 인라인 정규화 체인 수립 (<code>local_rectifier.py</code>)</b></summary>
@@ -208,6 +208,28 @@ jax-softmax-bypass/
 * **How we fixed it :** OS 커널 추상화 벽을 완벽히 관류하는 범용 `psutil` 기반의 현재 프로세스 물리 주소 상주 메모리(RSS) 실시간 계측 회로로 개편했습니다. 대규모 런타임 하이재킹 교체 주행과 자동 미분 연쇄 패스가 완전히 완료된 후에도 호스트 시스템의 메모리 지터 진폭이 64KB(65536 Byte) 가드레일 평면을 절대 찢지 못하도록 엄격한 크로스 플랫폼 단언문(`assert`) 방화벽을 구성했습니다.
 </details>
 
+#### 2차 추가 고도화 (이유 : Serving Orchestration을 위해 고도화 필요성)
+
+<details open>
+<summary><b>[고도화 9] K8s/Ray 클러스터 토폴로지 자동 정류 부트스트래퍼 완공 (`cluster_bootstrap.py`)</b></summary>
+
+- **What was wrong :** 대규모 서빙 환경에서 분산 노드(Worker Pod)들이 아키텍처 환경 변수(`WORLD_SIZE`, `RANK`) 파편화로 인해 컴파일러 셔딩 헌법을 상실하거나 장비 확장(Scale-out) 시 런타임 크래시를 유발했습니다.
+- **How we fixed it :** 쿠버네티스 및 Ray 인프라의 표준 분산 플래그를 실시간 스캔하여 가용한 전체 가속기 군집을 하드웨어 스케일별로 유연하게 자동 사상(Topology Mapping)합니다. 소규모 테스트 환경이나 단일 GPU 진입 시에는 단일 노드 모드로 가변 완충 제어되어 인프라 이식성을 극대화하는것을 목표로 했습니다.
+</details>
+
+<details open>
+<summary><b>[고도화 10] VRAM 소모량 $O(1)$ 상수가선 캐시 관리 용기 수립 (`kv_vessel_manager.py`)</b></summary>
+
+- **What was wrong :** 최상위 서빙 프레임워크조차도 문맥(Context)이 확장되면 KV 캐시 행렬이 시퀀스 길이에 비례해 지수적으로 팽창하거나 페이지드 어텐션(PagedAttention) 등의 가상 메모리 관리 블록을 적재하느라 VRAM 고사 및 연산 코어 정체(Stall)를 맞이했습니다.
+- **How we fixed it :** 생성자 타임에 시퀀스 축($N$)이 완전히 숙청된 고정 차원 텐서 용기(`vessel`)를 하드웨어에 정적 선점(Static Pre-allocation)합니다. 신규 유입 토큰의 파동 전하량만을 계산하여 기존 지식 용기에 단 1주기의 유휴 시간(Idling) 없이 온칩 SRAM 내부에서 인플레이스 가산(`vessel + delta_vessel`)함으로써 메모리 재할당 오버헤드를 동결하는것을 목표로 했습니다.
+</details>
+
+<details open>
+<summary><b>[고도화 11] vLLM 런타임 0ns 메모리 제로카피 핫플러그 게이트웨이 구축 (`vllm_hotplug_entrypoint.py`)</b></summary>
+
+- **What was wrong :** 아무리 뛰어난 가속 엔진을 개발해도 상용 레벨의 고속 사출 웹 인프라(Rest API, 스트리밍 데몬)와 도킹하는 과정에서 데이터 직렬화 병목이 생기거나 파이토치 세션 락에 걸리는 한계가 도사렸습니다.
+- **How we fixed it :** FastAPI 인프라 상에서 vLLM 내부 가중치 로드 즉시 런타임 레이스 컨디션을 낚아채어, 우리가 설계한 범용 무분기 대수 평면 가속 심장으로 실시간 몽키 패치 하이재킹을 집행합니다. `WaveKVCache` 캐시 캡슐을 상위 프레임워크의 세션 루프와 메모리 복사 비용 0MB 상태로 직결 중재하여 Drop-in 호환성을 완수를 목표로 했습니다.
+</details>
 
 ---
 
