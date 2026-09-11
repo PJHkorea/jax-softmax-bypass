@@ -14,19 +14,19 @@ This repository serves as a **Proof-of-Concept (PoC)** architectural framework d
 
 ---
 
-### 🎯 Target Architectures & Silicon-Tier Gateway
+### Target Architectures & Silicon-Tier Gateway
 
-This framework targets **Static Dense Transformer** layouts with zero dynamic routing overhead. The compiler fences and $O(1)$ constant caches are strictly hardware-locked to support the following backbone infrastructures:
+This framework explicitly targets **Static Dense Transformer** 아키텍처 layouts operating with zero dynamic routing overhead. The compiler optimization fences and constant time $O(1)$ space caches are strictly hardware-locked to support the following backbone infrastructures:
 
-*   **Meta LLaMA Family** (LLaMA-2, LLaMA-3, LLaMA-3.1) $\rightarrow$ [`core_formula/spmd_sharding_lanes.py`](./core_formula/spmd_sharding_lanes.py)
-*   **Google Gemma Family** (Gemma, Gemma-2) $\rightarrow$ [`bypass_rectifiers/taylor_glu.py`](./bypass_rectifiers/taylor_glu.py)
+*   **Meta LLaMA Family** (LLaMA-2, LLaMA-3, LLaMA-3.1) 
+    *   *Infrastructure Alignment:* Intercepted and synchronized via the SPMD tensor-parallel partition constraints defined inside [`core_formula/spmd_sharding_lanes.py`](./core_formula/spmd_sharding_lanes.py).
+*   **Google Gemma Family** (Gemma, Gemma-2)
+    *   *Structural Alignment:* Aligned dynamically using the custom polynomial offset scaling layers engineered inside [`bypass_rectifiers/taylor_glu.py`](./bypass_rectifiers/taylor_glu.py).
 
-> ⚠️ **Out-of-Scope Notice (Mixture-of-Experts):** 
-> Mixture-of-Experts (MoE) architectures (e.g., Mixtral, DeepSeek) are explicitly out-of-scope for the core engine due to dynamic token routing and variable tensor ranks that fracture static compiler tracing. 
-> 
-> For expanding this framework into MoE-class backbones without triggering XLA re-compilation, please check our isolated experimental blueprint at [`examples/moe_router_blueprint.py`](./examples/moe_router_blueprint.py) and read the accompanying [`docs/EXTENSION_GUIDE.md`](./docs/EXTENSION_GUIDE.md).
+[CRITICAL NOTICE: MIXTURE-OF-EXPERTS OUT-OF-SCOPE BOUNDARY]
+Mixture-of-Experts (MoE) architectures (e.g., Mixtral, DeepSeek) are explicitly out-of-scope for the primary acceleration engine. Dynamic token routing and variable execution tensor ranks fracture static compiler tracing tracks, triggering continuous runtime graph reconstruction overheads. 
 
----
+For engineers seeking to extend this algebraic contraction framework into MoE-class backbones without disrupting the XLA compilation paths, please examine our isolated speculative blueprint at [`examples/moe_router_blueprint.py`](./examples/moe_router_blueprint.py) and read the accompanying architectural documentation inside [`docs/EXTENSION_GUIDE.md`](./docs/EXTENSION_GUIDE.md).
 
 
 ---
