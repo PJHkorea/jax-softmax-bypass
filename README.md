@@ -116,7 +116,7 @@ jax-softmax-bypass/
 ├── core_formula/                      
 │   ├── spmd_sharding_lanes.py         # 분산 메시 록킹 헌법
 │   ├── softmax_bypassing_decoder.py   # 파동 적산 디코딩 코어
-│   └── multi_head_wave_attention.py   # 4D GEMM 전사 하이웨이
+│   └── multi_head_wave_attention.py   # 4D GEMM 전사 하이웨이 (KV 증분 적산 로직 내장)
 │
 ├── bypass_rectifiers/                 
 │   ├── __init__.py
@@ -124,6 +124,11 @@ jax-softmax-bypass/
 │   ├── torus_rope.py                  # 레지스터 프리 토러스 RoPE 정류기
 │   └── taylor_glu.py                  # 호너법 기반 SwiGLU 우회 정류기
 │
+├── serving/                    # 실전 대규모 분산 서빙 패키지 레일
+│   ├── cluster_bootstrap.py          # 분산 멀티노드 가속기 메시 부트스트랩
+│   ├── kv_vessel_manager.py          # O(1) 고정 차원 파동 캐시 관리 엔진
+│   └── vllm_hotplug_entrypoint.py    # FastAPI 및 vLLM 엔진 가중치 하이재킹 진입로
+├
 ├── wave_attention_hijacker_core.py    # LLaMA & Gemma 통합 FFI 하이재커 코어
 │
 └── tests/                             
