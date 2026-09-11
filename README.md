@@ -66,9 +66,8 @@ XLA 분산 가속기 클러스터 환경에서 AI 모델의 최대 병목인 Sof
 - **`serving/vllm_hotplug_entrypoint.py`**: FastAPI 인프라 상에서 vLLM 내부 가중치 로드 즉시, 메모리 제로카피, 몽키 패치로 실시간 하이재킹하는 핫플러그 게이트웨이 코어.
 
 #### `tests/`
-- **`wave_attention_hijacker_core.py`**: `__cuda_array_interface__` v3 프로토콜과 DLPack 공유 컨테이너를 제어선으로 활용하여 PyTorch-JAX 간 주소 포인터를 제로카피로 하이브리드 중재하는 LLaMA & Gemma 통합 FFI 하이재커.
-- **`tests/test_multi_head_wave_attention.py`**: `psutil` 기반 크로스 플랫폼 RSS 추적을 통해 OS 물리 메모리 지터 누수를 64KB 이내로, 자동 미분 도함수 전하량 무결성을 체크하는 테스트.
-- **`tests/test_universal_hijacker.py`**: Meta LLaMA-3 FP16 백본 모델의 32K 컨텍스트 VRAM 절감률 체크 및 초장문 생성 수율 격차를 크로스 플랫폼 환경에서 실측하는 벤치마크.
+- **`tests/test_multi_head_wave_attention.py`**: `psutil` 기반 크로스 플랫폼 RSS 추적을 통해 OS 물리 메모리 지터 누수를 64KB 이내로 동결하고, SeqLen=1 실시간 증분 디코딩 시의 $O(1)$ 상수 캐시 형상을 확증 단언하는 통합 테스트 벤치.
+- **`tests/test_universal_hijacker.py`**: Meta LLaMA-3 FP16 백본 아키텍처 토폴로지 상에서 2K~32K 컨텍스트 확장 시의 VRAM 절감률과 생성 수율을 실측하고, 하깅페이스 use_cache 디코딩 루프 진입 시 사출되는 WaveKVCache 객체 무결성을 크로스 플랫폼 환경에서 스캔하는 E2E 프로파일러 벤치마크
 
 #### 하이재커
 - **`wave_attention_hijacker_core.py`**: `__cuda_array_interface__` v3 프로토콜과 DLPack 공유 컨테이너를 제어선으로 활용하여, 하깅페이스 past_key_value 규격을 O(1) 고정 차원 하이브리드 캐시 캡슐(WaveKVCache)로 메모리 복사 비용 0MB 상태로 가로채어 하부 엔진의 history_vessel 레일과 직결 및 중재하는 하이재커.
