@@ -4,7 +4,7 @@ from jax.sharding import PartitionSpec as P
 
 class LocalHomeostaticRectifier:
     """
-    [P0 - 공동 최우선 과제] 레이어 정규화(Norm) 전역 락 거세 커널 (LLaMA & Gemma 통합 및 SPMD 최적화형)
+    [최우선 과제] 레이어 정규화(Norm) 전역 락 거세 커널 (LLaMA & Gemma 통합 및 SPMD 최적화형)
     소프트맥스가 탈피된 평면에서 유입되는 극단적인 데이터 스케일 변동을
     전역 감축(Global Reduction Sync Lock) 없이 국소 대수 변환 및 3차 왜도 소산 기전으로 정류하며,
     동시에 LLaMA/Gemma의 가중치를 분기 없이 하이재킹하고 하드웨어 메시 상의 통신 노이즈를 제로화합니다.
