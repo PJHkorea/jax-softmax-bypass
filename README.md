@@ -93,10 +93,10 @@ flowchart LR
 
 jax-softmax-bypass/
 ├── core_formula/
-│   ├── softmax_bypassing_decoder.py 
+│   ├── softmax_bypassing_decoder.py
+│   ├── multi_head_wave_attention.py  
 │   └── spmd_sharding_lanes.py      
-├── hijack_llama_wave_attention.py  
-├── multi_head_wave_attention.py   
+├── hijack_llama_wave_attention.py   
 ├── test_wave_attention.py          
 ├── benchmark_llama_wave.py        
 └── README.md                      
