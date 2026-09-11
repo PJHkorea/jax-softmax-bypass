@@ -70,6 +70,8 @@ XLA 분산 가속기 클러스터 환경에서 AI 모델의 최대 병목인 Sof
 - **`tests/test_multi_head_wave_attention.py`**: `psutil` 기반 크로스 플랫폼 RSS 추적을 통해 OS 물리 메모리 지터 누수를 64KB 이내로, 자동 미분 도함수 전하량 무결성을 체크하는 테스트.
 - **`tests/test_universal_hijacker.py`**: Meta LLaMA-3 FP16 백본 모델의 32K 컨텍스트 VRAM 절감률 체크 및 초장문 생성 수율 격차를 크로스 플랫폼 환경에서 실측하는 벤치마크.
 
+#### 하이재커
+- **`wave_attention_hijacker_core.py`**: `__cuda_array_interface__` v3 프로토콜과 DLPack 공유 컨테이너를 제어선으로 활용하여, 하깅페이스 past_key_value 규격을 O(1) 고정 차원 하이브리드 캐시 캡슐(WaveKVCache)로 메모리 복사 비용 0MB 상태로 가로채어 하부 엔진의 history_vessel 레일과 직결 및 중재하는 하이재커.
 
 
 ```mermaid
