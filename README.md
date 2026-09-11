@@ -8,26 +8,21 @@ Standard Transformer Softmax operations require calculating global row-wise redu
 
 To overcome this infrastructure limitation, this framework alters the underlying mathematical apparatus into a configuration optimized for algebraic kernel flattening. Without introducing any hardware modifications, this pure architectural transformation maximizes computing density and hardware throughput efficiency under massive long-context workloads.
 
-## Softmax-Bypassing Wave Decoder ( jax-softmax-bypass )
-
-This repository serves as a **Proof-of-Concept (PoC)** architectural framework designed to bypass... (기존 본문 타이틀)
-
 ---
 
 ### Target Architectures & Silicon-Tier Gateway
 
-This framework explicitly targets **Static Dense Transformer** 아키텍처 layouts operating with zero dynamic routing overhead. The compiler optimization fences and constant time $O(1)$ space caches are strictly hardware-locked to support the following backbone infrastructures:
+This framework explicitly targets **Static Dense Transformer** architecture layouts operating with zero dynamic routing overhead. The compiler optimization fences and constant-time $O(1)$ space caches are strictly hardware-locked to support the following backbone infrastructures:
 
 *   **Meta LLaMA Family** (LLaMA-2, LLaMA-3, LLaMA-3.1) 
     *   *Infrastructure Alignment:* Intercepted and synchronized via the SPMD tensor-parallel partition constraints defined inside [`core_formula/spmd_sharding_lanes.py`](./core_formula/spmd_sharding_lanes.py).
 *   **Google Gemma Family** (Gemma, Gemma-2)
     *   *Structural Alignment:* Aligned dynamically using the custom polynomial offset scaling layers engineered inside [`bypass_rectifiers/taylor_glu.py`](./bypass_rectifiers/taylor_glu.py).
 
-[CRITICAL NOTICE: MIXTURE-OF-EXPERTS OUT-OF-SCOPE BOUNDARY]
+### [CRITICAL NOTICE: MIXTURE-OF-EXPERTS OUT-OF-SCOPE BOUNDARY]
 Mixture-of-Experts (MoE) architectures (e.g., Mixtral, DeepSeek) are explicitly out-of-scope for the primary acceleration engine. Dynamic token routing and variable execution tensor ranks fracture static compiler tracing tracks, triggering continuous runtime graph reconstruction overheads. 
 
 For engineers seeking to extend this algebraic contraction framework into MoE-class backbones without disrupting the XLA compilation paths, please examine our isolated speculative blueprint at [`examples/moe_router_blueprint.py`](./examples/moe_router_blueprint.py) and read the accompanying architectural documentation inside [`docs/EXTENSION_GUIDE.md`](./docs/EXTENSION_GUIDE.md).
-
 
 ---
 
