@@ -92,6 +92,9 @@ For engineers seeking to extend this algebraic contraction framework into MoE-cl
 #### Hijacking Interface Core
 - **`wave_attention_hijacker_core.py`**: The primary system software bridge; leverages the `__cuda_array_interface__` v3 protocol and DLPack abstractions to capture PyTorch parameter allocations, converting HuggingFace `past_key_value` layouts into custom fixed-size `WaveKVCache` objects with 0MB data duplication overhead.
 
+#### `examples/` (Speculative Expansion Blueprints)
+- **`examples/moe_router_blueprint.py`**: A universal static Mixture-of-Experts (MoE) router gateway blueprint; dynamically maps mutable token routing trajectories symmetrically into fixed 3D tensor layouts to destroy compiler graph tracking breakage and re-compilation lag, driving isolated compilation paths across our custom Horner's Method SwiGLU core arrays.
+
 
 ```mermaid
 flowchart LR
@@ -159,6 +162,9 @@ jax-softmax-bypass/
 │   └── vllm_hotplug_entrypoint.py     # FastAPI and vLLM framework deployment runtime gateway
 │
 ├── wave_attention_hijacker_core.py    # Cross-framework FFI zero-copy hijacking core orchestrator
+│
+├── examples/                          # Speculative Architectural Expansion Layer
+│   └── moe_router_blueprint.py        # Static Mixture-of-Experts (MoE) routing gateway blueprint
 │
 └── tests/                             # Precision Quality Assurance Defenses
     ├── test_universal_hijacker.py     # End-to-end performance benchmarking profiler (VRAM & TPS)
