@@ -5,7 +5,7 @@ from jax.sharding import PartitionSpec as P
 
 class TorusTopologyRotaryEmbedding:
     """
-    [P0 - 공동 최우선 과제] 회전 위치 임베딩(RoPE) 위상 감금 커널 (SPMD 분산 최적화 및 레지스터 프리 롤링형)
+    [최우선 과제] 회전 위치 임베딩(RoPE) 위상 감금 커널 (SPMD 분산 최적화 및 레지스터 프리 롤링형)
     문맥 길이가 길어질 때 위치 각도가 무한히 발산하는 열린 계 구조를 폐기하고,
     오직 주기적 다양체 사영을 통해 닫힌 도넛 위상(Torus) 표면 범위 안으로 수치를 영구 구속하며,
     동시에 메모리 할당(zeros_like) 오버헤드가 없는 레지스터 인라인 롤링 기법으로 위상 변환을 종결합니다.
