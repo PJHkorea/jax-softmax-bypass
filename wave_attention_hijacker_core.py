@@ -181,23 +181,14 @@ class UniversalAttentionWaveHijacker(nn.Module):
 
 
 def patch_llama_model_with_wave_attention(model: nn.Module, mesh_shape: int = 64, alpha: float = 0.01) -> nn.Module:
-    """HuggingFace 모델의 레거시 Attention 블록을 파동 디코더 레이어로 변환합니다."""
+    """
+    [🔥 GLOBAL INTEGRATED INJECTOR]
+    이미 장치 메모리(HBM)에 로드된 HuggingFace LlamaForCausalLM 및 GemmaForCausalLM 인스턴스의
+    모든 레거시 어텐션 블록을 파동 디코더 레이어로 복사 없이 실시간 통합 하이재킹 변환합니다.
+    """
     hijacked_count = 0
-    mesh_target = mesh_shape if isinstance(mesh_shape, int) else int(mesh_shape[0])
     
-    for name, module in model.named_modules():
-        if "LlamaAttention" in module.__class__.__name__ or "GemmaAttention" in module.__class__.__name__:
-            parent_name = ".".join(name.split(".")[:-1])
-            child_name = name.split(".")[-1]
-            parent_module = model.get_submodule(parent_name) if parent_name else model
-            setattr(parent_module, child_name, UniversalAttentionWaveHijacker(module, mesh_shape=mesh_target, alpha=alpha))
-            hijacked_count += 1
-            
-    print(f"🧬 [HIJACK SUCCESS] 총 {hijacked_count}개의 레거시 어텐션 레이어가 교체되었습니다.")
-    return model
-
-    
-      # ------------------------------------------------------------------------
+    # ------------------------------------------------------------------------
     # [⚡ 고도화: 글로벌 몽키 패치 결착 전 인프라 토폴로지 형상 사전 정류]
     # ------------------------------------------------------------------------
     mesh_target = mesh_shape if isinstance(mesh_shape, int) else int(mesh_shape[0])
@@ -223,6 +214,7 @@ def patch_llama_model_with_wave_attention(model: nn.Module, mesh_shape: int = 64
             setattr(parent_module, child_name, hijacker_layer)
             hijacked_count += 1
             
-    print(f"🧬 [HIJACK SUCCESS] 총 {hijacked_count}개의 레거시 Softmax 어텐션 레이어가 'Wave-Attention' 하이브리드 레일로 교체되었습니다.")
+    print(f"🧬 [HIJACK SUCCESS] 총 {hijacked_count} 개의 레거시 Softmax 어텐션 레이어가 'Wave-Attention' 하이브리드 레일로 교체되었습니다.")
     return model
+
 
