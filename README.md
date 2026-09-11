@@ -60,6 +60,11 @@ XLA 분산 가속기 클러스터 환경에서 AI 모델의 최대 병목인 Sof
 - **`bypass_rectifiers/torus_rope.py`**: 나선형 공간 발산을 유계 도넛 토러스 다양체로 위상 가둠하여 초장문 위상 누수율을 회피하는 레지스터 프리 토러스 RoPE 정류기.
 - **`bypass_rectifiers/taylor_glu.py`**: SiLU 지수 초월함수를 제거하고 호너법(Horner's Method) 기반 인라인 FMA 플래트닝 및 FFN 3차 왜도 평탄화를 달성한 SwiGLU 우회 정류기.
 
+#### `serving/`
+- **`serving/cluster_bootstrap.py`**: K8s 및 Ray 클러스터 환경 변수를 동적으로 스캔하여 가용한 전체 분산 가속기 군집 토폴로지를 자동으로 계산하고 전역 셔딩 가드레일을 록킹.
+- **`serving/kv_vessel_manager.py`**: 문맥 길이의 폭발과 무관하게 고정된 대수 평면 구조 내에 신규 토큰의 파동 전하량을 증분 누적하여 VRAM 소모량을 $O(1)$ 상수가선으로 통제하는 캐시 관리 용기.
+- **`serving/vllm_hotplug_entrypoint.py`**: FastAPI 인프라 상에서 vLLM 내부 가중치 로드 즉시, 메모리 제로카피, 몽키 패치로 실시간 하이재킹하는 핫플러그 게이트웨이 코어.
+
 #### `tests/`
 - **`wave_attention_hijacker_core.py`**: `__cuda_array_interface__` v3 프로토콜과 DLPack 공유 컨테이너를 제어선으로 활용하여 PyTorch-JAX 간 주소 포인터를 제로카피로 하이브리드 중재하는 LLaMA & Gemma 통합 FFI 하이재커.
 - **`tests/test_multi_head_wave_attention.py`**: `psutil` 기반 크로스 플랫폼 RSS 추적을 통해 OS 물리 메모리 지터 누수를 64KB 이내로, 자동 미분 도함수 전하량 무결성을 체크하는 테스트.
