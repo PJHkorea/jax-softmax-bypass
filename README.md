@@ -1,3 +1,13 @@
+## Softmax-Bypassing Wave Decoder (`jax-softmax-bypass`)
+
+XLA 분산 가속기 클러스터 환경에서 AI 모델의 병목 중 하나인 Softmax의 초월 지수함수($e^x$) 회로를 FMA Taylor 2차 대수학 평면으로 우회 처리하고, 3차 왜도(Skewness) 소산 필터를 통해 수치해석적 NaN 발산을 회피하는 방향성의 PoC입니다.
+
+### 이 구조가 왜 필요한가요? (The Memory Wall)
+
+기존 트랜스포머의 Softmax 연산은 행렬의 전역(Global) 데이터 합을 구해야 하므로, GPU 내부의 온칩 레지스터 연산이 끝나도 메모리 버스를 놔주지 못하고 락(Lock)이 걸리는 동기화 병목을 유발하여 메모리 대역폭 장벽을 폭유발시킵니다. 본 엔진은 수학적 방향성 변화를 통해 연산 전력 소모량과 레이턴시를 줄여보고자 합니다.
+
+---
+
 ### 추가 작업 예정 
 1. 로컬 정류 정규화(Local Rectified Norm)’ 닫힌계로 대체
 - LocalHomeostaticRectifier (정규화 계층) ──> 디코더 내부 jnp.mean과 jnp.var 전역 락을 제거하기 위해, self.rectifier 인스턴스로 완전히 대체 주입.
@@ -8,14 +18,6 @@
 
 3. 2차 테일러 우회(FMA 단일 사이클 구현)와 클리핑 방화벽(maximum 가드)을 SwiGLU의 전방 진입점에 이식
 - bypass_rectifiers/ taylor_glu.py                  # 호너법 기반 SwiGLU 우회 정류기
-
-## Softmax-Bypassing Wave Decoder (`jax-softmax-bypass`)
-
-XLA 분산 가속기 클러스터 환경에서 AI 모델의 병목 중 하나인 Softmax의 초월 지수함수($e^x$) 회로를 FMA Taylor 2차 대수학 평면으로 우회 처리하고, 3차 왜도(Skewness) 소산 필터를 통해 수치해석적 NaN 발산을 회피하는 방향성의 PoC입니다.
-
-### 이 구조가 왜 필요한가요? (The Memory Wall)
-
-기존 트랜스포머의 Softmax 연산은 행렬의 전역(Global) 데이터 합을 구해야 하므로, GPU 내부의 온칩 레지스터 연산이 끝나도 메모리 버스를 놔주지 못하고 락(Lock)이 걸리는 동기화 병목을 유발하여 메모리 대역폭 장벽을 폭유발시킵니다. 본 엔진은 수학적 방향성 변화를 통해 연산 전력 소모량과 레이턴시를 줄여보고자 합니다.
 
 ---
 
