@@ -202,8 +202,31 @@ jax-softmax-bypass/
 
 ### 4. 구조적 FAQ (Architectural Trade-offs)
 
-* **Q1. 왜 시퀀스 축에 선형 점화식(CumSum)을 안 썼나요?**
-  * **A:** 순차적 의존성(RNN 병목)을 제거하여 XLA 컴파일러가 전체 시퀀스를 Tensor Core GEMM 레일 내 빠르게 인라인 융합(HLO Fusion)하도록 유도했습니다.
+<details open>
+<summary><b>Q1. 왜 시퀀스 축(SeqLen)에 선형 점화식(CumSum/Recurrent)을 안 썼나요?</b></summary>
 
-* **Q2. 왜 코어(`__call__`) 내부에 4D 텐서 확장 매핑을 직접 안 넣었나요?**
-  * **A:** 외곽 `MultiHeadWaveAttention`과 완벽히 역할을 분담하여 컴파일 타임 차원 찢어짐(ConcretizationTypeError)을 차단하고 XLA의 기계어 병합 마진을 극대화시키려 했습니다.
+* **What was wrong :** 기존의 많은 선형 어텐션(Linear Attention) 구조가 순차적 의존성을 해결하기 위해 누적 합(`jnp.cumsum`)이나 RNN 스타일의 순방향 점화식을 차용합니다. 하지만 이는 가속기 내부 연산 유닛 간의 순차적 대기 정체(Sequential Dependency)를 유발합니다.
+* **How we fixed it :** 저는 이를 과감히 폐기하고 복소 기저 평면 사영을 통한 물리적 연속체 적분 기전으로 플래트닝하여, XLA 컴파일러가 전체 시퀀스를 Tensor Core/MXU의 GEMM 연산 레일 내에서 단 하나의 거대한 인라인 융합 기계어 커널(Single Fused HLO Kernel)로 병합하도록 유도했습니다.
+</details>
+
+<details open>
+<summary><b>Q2. 왜 개별 정류 무기체 코어(__call__) 내부에 차원 조작 및 4D 텐서 확장 매핑을 직접 안 넣었나요?</b></summary>
+
+* **What was wrong :** 개별 커널 내부에서 차원 조작(`reshape`, `transpose`)을 남발하면, JAX의 정적 그래프 트레이서가 컴파일 타임에 데이터의 물리적 배치 형태를 잃어버려 차원 찢어짐(`ConcretizationTypeError`) 크래시를 유발하거나 불필요한 메모리 재할당(Copy) 오버헤드를 강제 유입시킵니다.
+* **How we fixed it :** 하부 정류기들은 오직 순수 대수 연산과 무분기 MUX 클리핑만 수행하고, 차원 변형 및 분산 셔딩 제약은 최상위 관제소(`spmd_sharding_lanes.py`) 및 사령탑(`MultiHeadWaveAttention`)과 완벽히 역할을 분담하도록 차단 격리하여 XLA의 기계어 병합 마진을 최대화했습니다.
+</details>
+
+<details open>
+<summary><b>Q3. 테일러 급수와 토러스 위상 가둠 변환으로 인한 '지능(Loss)의 표현력 왜곡' 리스크는 없나요?</b></summary>
+
+* **What was wrong :** 소프트맥스의 가우시안 지수 확률 분포와 무한 발산 위상각을 제한 유계 공간으로 정류했기 때문에, 원래의 사전 학습 가중치와 수치적 정렬 분포 상의 미세한 왜곡(Representational Drift)이 발생할 수 있습니다. (이것은 피할수 없습니다.)
+* **How we fixed it:** 대신 다른 부분에서 이점을 보기 위해 위해 3차 국소 왜도 소산 필터와 카시미르 Vacuum 실리콘 가드레일을 3중으로 구성했습니다. 때문에 수치적 파열이나 NaN 붕괴를 회피합니다. 스크래치 학습(Pre-training)은 물론, 기존 LLaMA/Gemma 백본에 기생 인입시킨 후 짧은 스텝의 LoRA 또는 Warm-up 파인튜닝만 진행하면 새로운 대수 평면 위로 가중치들이 수만 토큰의 컨텍스트를 품은 채 빠른 재정렬(Adaptation)이 될 것으로 파악됩니다.
+</details>
+
+<details open>
+<summary><b>Q4. 왜 완전한 커스텀 CUDA C가 아닌 JAX XLA와 FFI 제로카피 중재자 구조를 선택했나요?</b></summary>
+
+* **What was wrong :** 순수 CUDA C로 이 거대한 분산 헌법을 구현하려면 엔비디아(NVIDIA) 하드웨어에 종속될 뿐만 아니라, 수백 대 규모의 클러스터 분산 통신(NCCL) 오케스트레이션 코드를 밑바닥부터 다시 짜야 하는 인프라적 늪에 빠집니다.
+* **How we fixed it :** JAX XLA를 채택함으로써 엔비디아 GPU는 물론 구글 TPU(v4/v5e/v6e) 인프라까지 코드 수정 없이 최고 수율로 장악할 수 있습니다. 또한 `__cuda_array_interface__` v3 기반의 하이브리드 가교를 가동하여 PyTorch가 이미 메모리(HBM) 상에 로드해 둔 가중치를 **복사 비용 없이 완벽하게 하이재킹**할 수 있는 거인의 어깨에 올라타 더 멀리 바라보는 방식을 선택했습니다.
+</details>
+
