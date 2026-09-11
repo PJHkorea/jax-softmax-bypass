@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Homeostasis Spatial Bus - LLaMA & Gemma Runtime Hijacking Wrapper
-File: hijack_llama_wave_attention.py
+Homeostasis Spatial Bus - Universal LLaMA & Gemma Runtime Hijacking Core
+File: wave_attention_hijacker_core.py
 
 [파이토치-하깅페이스 생태계 소프트맥스 락 박멸용 바이너리 래퍼]
 [6차 고도화: dlpack_bridge.py 유산 인입 및 비동기 수명 주기 펜스 통합본]
@@ -26,8 +26,8 @@ class CUDAInterfaceBridge:
     def __cuda_array_interface__(self) -> dict:
         return self._raw_interface
 
-class LlamaAttentionWaveHijacker(nn.Module):
-    """[👑 LAYER 3.0: LLaMA & Gemma ATTENTION RUNTIME HIJACKING WRAPPER]"""
+class UniversalAttentionWaveHijacker(nn.Module):
+    """[👑 LAYER 3.0: UNIVERSAL LLaMA & GEMMA ATTENTION RUNTIME HIJACKING WRAPPER]"""
     def __init__(self, legacy_attention_block: nn.Module, mesh_shape: int = 64, alpha: float = 0.01) -> None:
         super().__init__()
         self.q_proj = legacy_attention_block.q_proj
