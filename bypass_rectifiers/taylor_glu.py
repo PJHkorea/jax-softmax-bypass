@@ -4,7 +4,7 @@ from jax.sharding import PartitionSpec as P
 
 class HomeostaticTaylorGluCore:
     """
-    [P1 - 차선 과제] SwiGLU 활성화 함수 초월연산 숙청 커널 (SPMD 분산 최적화 및 1클록 인라인 FMA 융합형)
+    [차선 과제] SwiGLU 활성화 함수 초월연산 숙청 커널 (SPMD 분산 최적화 및 1클록 인라인 FMA 융합형)
     지수함수(e^-x)의 연산 병목을 도려내고, 호너법(Horner's Method) 기반의 단일 패스 2차 대수 평면으로 정류합니다.
     """
     def __init__(self, hidden_dim: int, alpha: float = 0.02, casimir_delta: float = 1e-4):
