@@ -1,5 +1,5 @@
 """
-Homeostasis Spatial Bus - Multi-Head Wave-Attention Block (Part 1)
+Multi-Head Wave-Attention Block (Part 1)
 File: core_formula/multi_head_wave_attention.py
 """
 
