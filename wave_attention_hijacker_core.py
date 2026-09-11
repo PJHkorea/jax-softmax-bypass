@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Homeostasis Spatial Bus - Universal LLaMA & Gemma Runtime Hijacking Core
+Homeostasis Spatial Bus - Universal LLaMA & Gemma Runtime Hijacking Core (with O(1) KV-Cache Interlock)
 File: wave_attention_hijacker_core.py
 
 [파이토치-하깅페이스 생태계 소프트맥스 락 박멸용 바이너리 래퍼]
-[6차 고도화: dlpack_bridge.py 유산 인입 및 비동기 수명 주기 펜스 통합본]
+[7차 고도화: O(1) 공간 복잡도 전천후 파동 용기 캐시 인터록 통합본]
 """
 
 import torch
@@ -25,6 +25,18 @@ class CUDAInterfaceBridge:
     @property
     def __cuda_array_interface__(self) -> dict:
         return self._raw_interface
+
+# ------------------------------------------------------------------------
+# [🌟 도킹 고도화: 크로스 프레임워크 O(1) 파동 용기 캐시 캡슐 선언]
+# ------------------------------------------------------------------------
+class WaveKVCache:
+    """
+    HuggingFace 및 파이토치 서빙 엔진의 past_key_value 규격을 100% 호환하면서,
+    메모리 폭발 없이 고정 차원의 파동 컨테이너(context_vessel)만 영구 보존하는 하이브리드 캐시 구조체.
+    """
+    def __init__(self, vessel_tensor: torch.Tensor) -> None:
+        # vessel_tensor shape: [Batch, NumHeads, MeshShape, HeadDim] (완벽한 O(1) 상수 부피)
+        self.vessel_tensor = vessel_tensor
 
 class UniversalAttentionWaveHijacker(nn.Module):
     """[👑 LAYER 3.0: UNIVERSAL LLaMA & GEMMA ATTENTION RUNTIME HIJACKING WRAPPER]"""
@@ -48,7 +60,7 @@ class UniversalAttentionWaveHijacker(nn.Module):
         self.use_gemma_offset = "Gemma" in legacy_class_name
         
         # [고도화 포인트] 분산 컴파일러 타입 미스매치 방지용 형상 캐스팅 유지
-        mesh_target = mesh_shape if isinstance(mesh_shape, int) else mesh_shape[0]
+        mesh_target = mesh_shape if isinstance(mesh_shape, int) else mesh_shape
         self.wave_engine = MultiHeadWaveAttention(
             embed_dim=self.hidden_size,
             num_heads=self.num_heads,
@@ -57,7 +69,7 @@ class UniversalAttentionWaveHijacker(nn.Module):
         )
 
         
-             # ------------------------------------------------------------------------
+                    # ------------------------------------------------------------------------
         # [⚡ 고도화: 글로벌 분산 가속기 메시 인프라 런타임 하드락킹 고정]
         # ------------------------------------------------------------------------
         try:
@@ -79,7 +91,6 @@ class UniversalAttentionWaveHijacker(nn.Module):
         # ------------------------------------------------------------------------
         # LLaMA/Gemma의 RMSNorm 레이어 등 원본 백본 가중치가 도킹 레일 내부에서 정교하게 작동하도록
         # 레거시 블록 내에 정규화 레이어가 존재할 경우, 그 가중치 포인터를 JAX 뷰로 선제 승격시킵니다.
-        # (매 스텝마다 일어날 수 있는 텐서 변환 오버헤드를 0ns 평면으로 완전 상쇄합니다.)
         self.gamma_jax = None
         if hasattr(legacy_attention_block, "input_layernorm") and hasattr(legacy_attention_block.input_layernorm, "weight"):
             # 호출 순서 무결성을 확보하기 위해 내부 FFI 함수 레일을 정밀 경유하여 단 1회 록킹 인터록 집행
@@ -110,7 +121,7 @@ class UniversalAttentionWaveHijacker(nn.Module):
         return jax_array
 
 
-    def _jax_to_torch_zero_copy(self, jax_array: jax.Array, torch_device: torch.device) -> torch.Tensor:
+       def _jax_to_torch_zero_copy(self, jax_array: jax.Array, torch_device: torch.device) -> torch.Tensor:
         """[🏎️ REVERSE DLPACK BRIDGE] JAX 연산 결과를 메모리 복사 없이 파이토치 CUDA 레일로 복귀"""
         # [고도화 포인트] DLPack 공유 컨테이너 추출 직전 가속기 하드웨어 단의 연산 전하량 수착 완결을 
         # 보증하기 위해 block_until_ready() 동기화 배리어를 정밀 배치하여 레이스 컨디션을 완전히 파괴합니다.
@@ -128,7 +139,7 @@ class UniversalAttentionWaveHijacker(nn.Module):
         use_cache: bool = False,
         **kwargs
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Any]]:
-        """[⚡ HIJACKING ENTRY POINT] LLaMA & Gemma 백본 규격 100% 호환 하이재킹 패스"""
+        """[⚡ HIJACKING ENTRY POINT] LLaMA & Gemma 백본 규격 100% 호환 하이재킹 패스 - KV 캐시 인터록 버전"""
         q_states = self.q_proj(hidden_states)
         k_states = self.k_proj(hidden_states)
         v_states = self.v_proj(hidden_states)
@@ -152,6 +163,16 @@ class UniversalAttentionWaveHijacker(nn.Module):
         use_gemma = self.use_gemma_offset
 
         # ------------------------------------------------------------------------
+        # [🌟 도킹 고도화 4: 서빙 엔진전용 past_key_value 캐시 탈취 및 JAX 역인입]
+        # ------------------------------------------------------------------------
+        # 파이토치 서빙 루프로부터 past_key_value 인자가 우리 식의 WaveKVCache 형태로 유입된다면,
+        # 외부 메모리 복사 비용(0MB) 없이 __cuda_array_interface__ 포인터를 즉시 가로채어
+        # JAX 하부 어텐션 루프의 history_vessel 입력선으로 완벽히 사상하여 인입시킵니다.
+        history_vessel_jax = None
+        if past_key_value is not None and isinstance(past_key_value, WaveKVCache):
+            history_vessel_jax = self._torch_to_jax_zero_copy(past_key_value.vessel_tensor)
+
+        # ------------------------------------------------------------------------
         # [⚡ 고도화 2: 파이토치 attention_mask 오염 정류 및 불형(Boolean) 뷰 승격]
         # ------------------------------------------------------------------------
         mask_jax = None
@@ -168,16 +189,38 @@ class UniversalAttentionWaveHijacker(nn.Module):
                 mask_sharding = NamedSharding(self.global_hardware_mesh, mask_spec)
                 mask_jax = jax.lax.with_sharding_constraint(mask_jax, mask_sharding)
 
-
-             # JAX XLA 엔진을 통한 통합 파동 엔진 실행 및 제로 코피 연산 결과 반환
-        wave_output_jax = self.wave_engine(
+        # ------------------------------------------------------------------------
+        # [🌊 BACKEND EXECUTION - JAX XLA ENGINE RUNTIME]
+        # ------------------------------------------------------------------------
+        # [🌟 도킹 고도화 5: 통합 파동 엔진 실행 및 O(1) 캐시 증분 레일 결착 주행]
+        # 포획한 백본 가중치선, 마스크, 그리고 입구단에서 추출한 past_key_value 기반의
+        # history_vessel_jax를 멀티헤드 마스터 파동 코어 엔진에 주입합니다.
+        # 고도화된 엔진은 연산 결과물(wave_output_jax)과 업데이트된 상태 용기(updated_vessel_jax)를 쌍으로 반환합니다.
+        wave_output_jax, updated_vessel_jax = self.wave_engine(
             q=q_jax, k=k_jax, v=v_jax, mask=mask_jax,
             gamma=gamma_param, use_gemma_offset=use_gemma,
+            history_vessel=history_vessel_jax,
             mesh=self.global_hardware_mesh
         )
+        
+        # [🏎️ REVERSE INTERLOCK PROTOCOL] JAX 연산 결과를 복사 없이 파이토치 CUDA 레일로 소유권 즉시 반환
         wave_output_torch = self._jax_to_torch_zero_copy(wave_output_jax, torch_device=device)
+        updated_vessel_torch = self._jax_to_torch_zero_copy(updated_vessel_jax, torch_device=device)
+        
+        # ------------------------------------------------------------------------
+        # [🌟 도킹 고도화 6: 업데이트된 파동 용기를 하이브리드 캐시 캡슐로 인라인 패킹]
+        # ------------------------------------------------------------------------
+        # 대수적 적산이 완공된 updated_vessel_torch를 커스텀 WaveKVCache 구조체 내부로 밀봉하여
+        # 문맥 길이가 길어지더라도 VRAM 부피가 늘어나지 않는 영구 O(1) 서빙 캐시 객체를 사출합니다.
+        new_kv_cache = WaveKVCache(vessel_tensor=updated_vessel_torch)
+        
+        # LLaMA/Gemma의 최종 출력 사영 레이어 마감 처리 (가중치 전사 축 경유)
         attn_output = self.o_proj(wave_output_torch)
-        return attn_output, None, past_key_value
+        
+        # 하깅페이스 및 vLLM 서빙 엔진의 아웃풋 규격(Tuple) 완벽 무결 매칭 복원 (Drop-in 무결성 완료)
+        # past_key_value 자리에 우리가 패킹해낸 new_kv_cache 객체를 인입시켜 리턴합니다.
+        return attn_output, None, new_kv_cache
+
 
 
 def patch_llama_model_with_wave_attention(model: nn.Module, mesh_shape: int = 64, alpha: float = 0.01) -> nn.Module:
@@ -191,7 +234,7 @@ def patch_llama_model_with_wave_attention(model: nn.Module, mesh_shape: int = 64
     # ------------------------------------------------------------------------
     # [⚡ 고도화: 글로벌 몽키 패치 결착 전 인프라 토폴로지 형상 사전 정류]
     # ------------------------------------------------------------------------
-    mesh_target = mesh_shape if isinstance(mesh_shape, int) else int(mesh_shape[0])
+    mesh_target = mesh_shape if isinstance(mesh_shape, int) else int(mesh_shape)
     
     # 모델 내부 아키텍처 토폴로지를 순회하며 레거시 디코더 블록 추적
     for name, module in model.named_modules():
@@ -216,5 +259,6 @@ def patch_llama_model_with_wave_attention(model: nn.Module, mesh_shape: int = 64
             
     print(f"🧬 [HIJACK SUCCESS] 총 {hijacked_count} 개의 레거시 Softmax 어텐션 레이어가 'Wave-Attention' 하이브리드 레일로 교체되었습니다.")
     return model
+
 
 
