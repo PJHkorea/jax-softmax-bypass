@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
 """
 Homeostasis Spatial Bus - Multi-Head Wave-Attention Block Test Bench
-File: test_wave_attention.py
+File: tests/test_multi_head_wave_attention.py
 """
 
 import time
 import jax
 import jax.numpy as jnp
-from multi_head_wave_attention import MultiHeadWaveAttention
+
+# [아키텍처 정류]: core_formula 내부 통합 패키지 주소 및 샤딩 헌법 인입
+from core_formula.multi_head_wave_attention import MultiHeadWaveAttention
+from core_formula.spmd_sharding_lanes import establish_global_hardware_sharding_lanes
 
 def execute_e2e_test_bench():
     # [고도화 포인트] 파이썬 메모리 계측 오차를 분쇄하기 위해 리눅스 커널 물리 메모리(VmRSS) 직접 스캔 함수 정의
@@ -46,19 +49,30 @@ def execute_e2e_test_bench():
     # [⚡ 고도화 1: 레거시 LLM 백본 내부 스케일 폭발 및 인과적 마스크 스트레스 인입]
     # ------------------------------------------------------------------------
     # Step 1-1. 실제 프로덕션 LLaMA-3 환경에서 Q와 K의 사영 변환 후 에너지가 극단적으로 팽창한 상태를 모사
-    # 고의적으로 입력 텐서 스케일을 대폭 증폭시켜, 우리가 코어 단에 심어둔 Scale Factor의 정류력을 사증합니다.
     q_init = q_init * 15.0
     k_init = k_init * 15.0
     
     # Step 1-2. 실제 파이토치 하이재킹단에서 밀려 들어오는 미래 토큰 차단용 인과적 마스크 스트레스 버스 구축
-    # [Batch, 1, SeqLen, SeqLen] 규격의 Lower-Triangular 인과율 불값 매니폴드 생성
     mask_matrix = jnp.tril(jnp.ones((seq_len, seq_len), dtype=jnp.bool_))
     mask_init = jnp.broadcast_to(mask_matrix[None, None, :, :], (batch_size, 1, seq_len, seq_len))
 
     # ------------------------------------------------------------------------
+    # [🌟 도킹 고도화: 분산 가속기 메시 헌법 테스트 가드레일 인입]
+    # ------------------------------------------------------------------------
+    # 하부 주행 엔진이 다차원 샤딩 컨스트레인트를 오차 없이 실실론 레벨에서 실측할 수 있도록,
+    # 가용한 로컬 소켓 장치 수량을 파악하여 테스트 전용 mesh 라인을 유도 선포합니다.
+    try:
+        total_devices = len(jax.devices())
+        if total_devices >= 4:
+            global_mesh = establish_global_hardware_sharding_lanes(num_data_replicas=2, num_model_partitions=total_devices // 2)
+        else:
+            global_mesh = establish_global_hardware_sharding_lanes(num_data_replicas=1, num_model_partitions=total_devices)
+    except Exception:
+        global_mesh = None
+
+    # ------------------------------------------------------------------------
     # [Step 2: 하이재킹 모듈 인스턴스화 및 자동 미분 타깃 손실함수 선언]
     # ------------------------------------------------------------------------
-    # 모듈 초기화 및 정적 자원 할당 전 커널 메모리 상태 기저 측정
     memory_before = get_kernel_vm_rss()
 
     wave_attention_block = MultiHeadWaveAttention(
@@ -68,25 +82,33 @@ def execute_e2e_test_bench():
         alpha=alpha
     )
 
-    # 역전파 그라디언트 유동선 검증을 위한 가상 스칼라 손실(Loss) 함수 매핑
+
+       # 역전파 그라디언트 유동선 검증을 위한 가상 스칼라 손실(Loss) 함수 매핑
     # [고도화 포인트] 직렬화 복원 테스트를 유증하기 위해 모듈 블록을 동적으로 인입받도록 유연화
-    def build_loss_engine(target_block):
-        # 고도화된 마스크 인터록 흐름까지 동시 사증하기 위해 파이프라인 관로에 mask_tensor 추가 결착
+    def build_loss_engine(target_block, mesh_context):
+        # [🌟 도킹 고도화]: 고도화된 3대 무기 내부의 분산 샤딩 헌법이 완전히 집행되도록
+        # 파이프라인 관로 종단에 mesh_context 인자선을 직결 공급하도록 래핑 개조합니다.
         def loss_fn(q_tensor, k_tensor, v_tensor, mask_tensor):
-            output_manifold = target_block(q_tensor, k_tensor, v_tensor, mask=mask_tensor)
+            output_manifold = target_block(
+                q=q_tensor, 
+                k=k_tensor, 
+                v=v_tensor, 
+                mask=mask_tensor, 
+                mesh=mesh_context
+            )
             # L2 NormParity 및 연속 미분 가능 공간 상상의 스칼라 수축 복원
             return jnp.mean(jax.lax.square(output_manifold))
         return jax.value_and_grad(loss_fn, argnums=(0, 1, 2))
 
-     # ------------------------------------------------------------------------
+    # ------------------------------------------------------------------------
     # [★ 추가 고도화 PHASE 0: JAX PyTree 분산 SPMD 직렬화/역직렬화 인터록 완결 검증]
     # ------------------------------------------------------------------------
     print("\n[⚡ PHASE 0] JAX PyTree 구조적 직렬화 및 Bare-Metal 복원 무결성 검증...")
     children, aux_data = wave_attention_block.tree_flatten()
     reconstructed_block = MultiHeadWaveAttention.tree_unflatten(aux_data, children)
     
-    # 복원된 인스턴스를 마스터 엔진으로 기용하여 하위 자동 미분 파이프라인 가동
-    grad_loss_engine = build_loss_engine(reconstructed_block)
+    # 🌟 복원된 인스턴스와 선점된 전역 하드웨어 메시 락킹 관로를 마스터 엔진으로 결착 기용
+    grad_loss_engine = build_loss_engine(reconstructed_block, global_mesh)
 
     # ------------------------------------------------------------------------
     # [Step 3: XLA 워밍업 컴파일 및 런타임 수치 무결성 검증]
@@ -95,7 +117,6 @@ def execute_e2e_test_bench():
     start_compile = time.time()
     
     # 1회차 실행을 통해 가속기 내부 JIT 컴파일 및 최적 GEMM 커널 바인딩 강제
-    # [보정] 파트 1에서 새롭게 구축한 인과적 마스크 텐서(mask_init)를 컴파일러 추적선 내부로 동시 인입
     init_loss, init_grads = grad_loss_engine(q_init, k_init, v_init, mask_init)
     
     # JAX 비동기 실행 제어를 풀고 가속기 실리콘 단의 연산 완료를 완벽하게 동기화
@@ -107,13 +128,12 @@ def execute_e2e_test_bench():
     start_runtime = time.time()
     
     # 실제 기계어 인라인 융합 루프를 통과하는 가속 런타임 집행
-    # [보정] 프로덕션 계측 레일에도 동일하게 마스크 인자를 주입하여 브랜치리스 MUX의 실전 레이턴시 계측
     runtime_loss, runtime_grads = grad_loss_engine(q_init, k_init, v_init, mask_init)
     jax.block_until_ready((runtime_loss, runtime_grads))
     runtime_time = time.time() - start_runtime
     print(f"🚀 순수 가속기 연산 레이턴시: {runtime_time:.4f} 초")
 
-      # ------------------------------------------------------------------------
+    # ------------------------------------------------------------------------
     # [Step 4: 수치 해석적 안정성(NaN-Free) 및 커널 자원 가드레일 단언문 검증]
     # ------------------------------------------------------------------------
     print("\n[📊 PHASE 3] 수치 해석적 안정성 및 그라디언트 유동선 정밀 전사...")
@@ -134,7 +154,10 @@ def execute_e2e_test_bench():
         grad_l2_norm = jnp.sqrt(jnp.sum(jax.lax.square(grad_tensor)))
         print(f"✅ 역방향 패스 그라디언트 전하량 확보 ({stream_name}): L2 Norm = {grad_l2_norm:.6f}")
 
+
+       # ------------------------------------------------------------------------
     # [★ 추가 고도화 핵심 - OS 물리 메모리 지터 누수 차단 교차 단언]
+    # ------------------------------------------------------------------------
     final_total_alloc = get_kernel_vm_rss()
     memory_jitter_amplitude = abs(final_total_alloc - memory_before)
     print(f"├─ [인프라] 가동 전 선점 물리 자원 총량 : {memory_before} Byte")
