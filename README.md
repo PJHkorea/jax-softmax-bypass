@@ -1,3 +1,5 @@
+### Architectural Scope & Directional PoCPlease note that this repository is a high-level Proof-of-Concept (PoC) constructed to validate the radical integration of JAX XLA + Low-Level FFI Boundaries + Distributed Compiler Sharding Fences.Rather than serving as a turn-key, production-ready library ready for instantaneous commercial deployment, this framework is designed to deliver a technological blueprint and architectural direction for overcoming systemic LLM inference bottlenecks. We welcome community collaboration to refine these boundaries.
+
 ## Softmax-Bypassing Wave Decoder (`jax-softmax-bypass`)
 
 This repository serves as a **Proof-of-Concept (PoC)** architectural framework designed to bypass the transcendental exponential function ($e^x$) bottlenecks of Softmax operations inside distributed XLA accelerator clusters. By factorizing activation trajectories into a single-pass 2nd-order Taylor polynomial FMA (Fused Multiply-Add) algebraic plane, this framework deploys four branchless, closed-system integrated acceleration engines to rigidly confine numerical divergence leaks within deterministic physical boundary conditions.
