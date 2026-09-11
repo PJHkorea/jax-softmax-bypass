@@ -1,10 +1,13 @@
 ### 추가 작업 예정 
 1. 로컬 정류 정규화(Local Rectified Norm)’ 닫힌계로 대체
 - LocalHomeostaticRectifier (정규화 계층) ──> 디코더 내부 jnp.mean과 jnp.var 전역 락을 제거하기 위해, self.rectifier 인스턴스로 완전히 대체 주입.
+- local_rectifier.py             # 전역 락 거세 정규화 정류기
 
-3. 회전 위치 임베딩의 위치 각도를 끝없이 발산하게 두는 것이 아니라, 닫힌 도넛 위상(토러스 변환) 안으로 강제 감금
-4. 2차 테일러 우회(FMA 단일 사이클 구현)와 클리핑 방화벽(maximum 가드)을 SwiGLU의 전방 진입점에 이식
+2. 회전 위치 임베딩의 위치 각도를 끝없이 발산하게 두는 것이 아니라, 닫힌 도넛 위상(토러스 변환) 안으로 강제 감금
+- bypass_rectifiers/ torus_rope.py                  # 레지스터 프리 토러스 RoPE 정류기
 
+3. 2차 테일러 우회(FMA 단일 사이클 구현)와 클리핑 방화벽(maximum 가드)을 SwiGLU의 전방 진입점에 이식
+- bypass_rectifiers/ taylor_glu.py                  # 호너법 기반 SwiGLU 우회 정류기
 
 ## Softmax-Bypassing Wave Decoder (`jax-softmax-bypass`)
 
@@ -92,14 +95,22 @@ flowchart LR
 ```directory
 
 jax-softmax-bypass/
-├── core_formula/
-│   ├── softmax_bypassing_decoder.py
-│   ├── multi_head_wave_attention.py  
-│   └── spmd_sharding_lanes.py      
-├── hijack_llama_wave_attention.py   
-├── test_wave_attention.py          
-├── benchmark_llama_wave.py        
-└── README.md                      
+├── core_formula/                      # 헌법 및 본뇌 하이웨이
+│   ├── spmd_sharding_lanes.py         # 분산 메시 록킹 헌법
+│   ├── softmax_bypassing_decoder.py   # 파동 적산 디코딩 코어
+│   └── multi_head_wave_attention.py   # 4D GEMM 전사 하이웨이
+│
+├── bypass_rectifiers/                 # 차세대 수리 정류 무기고
+│   ├── __init__.py
+│   ├── local_rectifier.py             # 전역 락 거세 정규화 정류기
+│   ├── torus_rope.py                  # 레지스터 프리 토러스 RoPE 정류기
+│   └── taylor_glu.py                  # 호너법 기반 SwiGLU 우회 정류기
+│
+├── wave_attention_hijacker_core.py    # LLaMA & Gemma 통합 FFI 하이재커 코어
+│
+└── tests/                             # 실전 주행 및 스트레스 검증실
+    └── test_unified_hijacker.py       # (다음 단계: 통합 벤치마크 테스트베드)
+         
 
 ```
 
