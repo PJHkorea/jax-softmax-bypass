@@ -68,12 +68,22 @@ def measure_hardware_footprint(model, sequence_length: int, batch_size: int = 1)
     torch.cuda.synchronize()
     elapsed_time = time.perf_counter() - start_time
     
-    # ------------------------------------------------------------------------
+       # ------------------------------------------------------------------------
     # [🌟 도킹 고도화: 순방향 출력 매니폴드 수치 해석적 안정성(NaN-Free) 전수 스캔]
     # ------------------------------------------------------------------------
     # 래퍼단을 거쳐 나온 파이토치 최종 텐서가 NaN으로 오염되었는지 실시간 단언 확인합니다.
     if hasattr(output, "logits"):
         assert not torch.isnan(output.logits).any(), f"[FATAL ERROR] 추론 결과 logits 평면이 NaN으로 파괴되었습니다. (SeqLen: {sequence_length})"
+    
+    # 🌟 [서빙 캐시 순환 인터록 검증 사상]: 실시간 디코딩(Generation) 시의 past_key_value 수착 검포
+    # HuggingFace 표준 디코딩 루프 진입 시, 하부 UniversalAttentionWaveHijacker 가
+    # 고정 차원의 WaveKVCache 객체를 누적 패킹하여 누수 없이 출구로 사출하는지 교차 단언합니다.
+    if hasattr(output, "past_key_values") and output.past_key_values is not None:
+        from wave_attention_hijacker_core import WaveKVCache
+        # 사출된 캐시 캡슐이 우리의 하이브리드 고정 용기 규격 구조인지 전수 스캔
+        assert isinstance(output.past_key_values, WaveKVCache), (
+            f"[FATAL ERROR] FFI 캐시 하이재킹 무력화 결함! 사출된 past_key_value가 WaveKVCache 구조체가 아닙니다."
+        )
     
     # 5. 피크 VRAM 소모량 수집 (Byte -> MB 승격)
     peak_vram = torch.cuda.max_memory_allocated() / (1024 * 1024)
@@ -83,6 +93,7 @@ def measure_hardware_footprint(model, sequence_length: int, batch_size: int = 1)
     throughput = total_tokens / elapsed_time
     
     return peak_vram, throughput
+
 
 
 def run_scale_inversion_benchmark():
@@ -135,7 +146,7 @@ def run_scale_inversion_benchmark():
             else:
                 raise e
 
-         # [🛡️ HBM 닫힌계 청정 수호 프로토콜]
+            # [🛡️ HBM 닫힌계 청정 수호 프로토콜]
     # 바닐라 모델 측정 라운드가 끝나는 즉시 메모리 풀에서 가중치를 강제 출각하고
     # 캐시 연쇄 비우기를 주입하여 후속 파동 모델 측정 평면에 잔차 간섭을 원천 차단합니다.
     del vanilla_model
@@ -152,6 +163,12 @@ def run_scale_inversion_benchmark():
     wave_model = patch_llama_model_with_wave_attention(wave_model, mesh_shape=64, alpha=0.01)
     wave_model.eval()
     
+    # [🌟 서빙 캐시 기능 활성화 및 복전 정류 검증 명세 확장]
+    # 하깅페이스 모델 주행 사양 내부에서 `use_cache=True` 상태를 강제 활성화하더라도
+    # 우리 식의 WaveKVCache 구조체 인터록이 파이토치 서빙 엔진과 완벽히 공진하는지 검증합니다.
+    if hasattr(wave_model.config, "use_cache"):
+        wave_model.config.use_cache = True
+    
     wave_results = {}
     for scale in context_scales:
         try:
@@ -167,8 +184,8 @@ def run_scale_inversion_benchmark():
             print(f"❌ [CRASH] 파동 레일 {scale} 구간 예외 발생: {str(e)}")
             wave_results[scale] = (float('inf'), 0.0)
 
-            
-     # ------------------------------------------------------------------------
+
+       # ------------------------------------------------------------------------
     # [📊 STEP 4: 최종 성적표 출력 및 자원 세이빙 리포트 출력 - 헤더 정렬]
     # ------------------------------------------------------------------------
     print("\n========================================================================")
@@ -204,7 +221,7 @@ def run_scale_inversion_benchmark():
     # [★ 추가 고도화 핵심 - OS 물리 메모리 지터 누수 차단 크로스 플랫폼 최종 교차 단언]
     # ------------------------------------------------------------------------
     # [🌟 방안 B 고도화]: 벤치마크 종료 전 호스트의 실제 최종 자원 사용량을 재포획하여
-    # 대규모 학습/서빙 가중치 핫 플러깅 주행 시에도 호스트 자원 탈루가 제로인지 검증합니다.
+    # 대규모 학습/서빙 가중치 핫 플러깅 및 O(1) 캐시 주행 시에도 호스트 자원 탈루가 제로인지 검증합니다.
     host_mem_final = get_platform_physical_memory()
     host_jitter_amplitude = abs(host_mem_final - host_mem_start)
     
