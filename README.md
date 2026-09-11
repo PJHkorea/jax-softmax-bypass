@@ -1,23 +1,35 @@
 ## Softmax-Bypassing Wave Decoder (`jax-softmax-bypass`)
 
-XLA 분산 가속기 클러스터 환경에서 AI 모델의 병목 중 하나인 Softmax의 초월 지수함수($e^x$) 회로를 FMA Taylor 2차 대수학 평면으로 우회 처리하고, 3차 왜도(Skewness) 소산 필터를 통해 수치해석적 NaN 발산을 회피하는 방향성의 PoC입니다.
+XLA 분산 가속기 클러스터 환경에서 AI 모델의 최대 병목인 Softmax의 초월 지수함수($e^x$) 회로를 FMA Taylor 2차 대수학 평면으로 우회 처리하고, 수치해석적 NaN 발산을 물리적 경계조건 내로 구속하는 4개의 브랜치리스(Branchless) 닫힌계 통합 가속 엔진 아키텍처의 poc입니다.
 
 ### 이 구조가 왜 필요한가요? (The Memory Wall)
 
-기존 트랜스포머의 Softmax 연산은 행렬의 전역(Global) 데이터 합을 구해야 하므로, GPU 내부의 온칩 레지스터 연산이 끝나도 메모리 버스를 놔주지 못하고 락(Lock)이 걸리는 동기화 병목을 유발하여 메모리 대역폭 장벽을 폭유발시킵니다. 본 엔진은 수학적 방향성 변화를 통해 연산 전력 소모량과 레이턴시를 줄여보고자 합니다.
+기존 트랜스포머의 Softmax 연산은 행렬의 전역(Global) 데이터 합을 구해야 하므로, GPU 내부의 온칩 레지스터 연산이 끝나도 메모리 버스를 놔주지 못하고 락(Lock)이 걸리는 동기화 장벽(Synchronization Barrier)을 만듭니다. 이는 HBM 메모리 대역폭 장벽을 유발하여 가속기 실리콘을 유휴 상태(Idling)로 방치합니다. 본 프레임워크는 수학적 기전 자체를 커널 플래트닝(Kernel Flattening)이 가능한 형태로 변형하여, 하드웨어 변경 없이 오직 아키텍처 전환만으로 컴퓨팅 밀도와 가속 수율을 극한으로 끌어올려 보려고 합니다.
 
 ---
 
-### 추가 작업 예정 
-1. 로컬 정류 정규화(Local Rectified Norm)’ 닫힌계로 대체
-- LocalHomeostaticRectifier (정규화 계층) ──> 디코더 내부 jnp.mean과 jnp.var 전역 락을 제거하기 위해, self.rectifier 인스턴스로 완전히 대체 주입.
-- local_rectifier.py             # 전역 락 거세 정규화 정류기
+###  4개의 브랜치리스 닫힌계 
 
-2. 회전 위치 임베딩의 위치 각도를 끝없이 발산하게 두는 것이 아니라, 닫힌 도넛 위상(토러스 변환) 안으로 강제 감금
-- bypass_rectifiers/ torus_rope.py                  # 레지스터 프리 토러스 RoPE 정류기
+#### 1. 로컬 정류 정규화 기전 (`LocalHomeostaticRectifier`)
+- 왜 이 파일을 만들었을까요? -> 표준 RMSNorm/LayerNorm이 유발하는 행 축 전체의 전역 감축 락.
+- 온칩 레지스터 단에서 자가 승산 `rsqrt` 프리미티브 연산을 1클록 라인 내에서 인라인 집행, 분모 고사를 차단하는 카시미르 가드(Casimir Guard)와 3차 국소 왜도 소산 제동 회로를 통해 입력 스케일을 유계 공간 내로 정류하려 함.
+- **파일:** `bypass_rectifiers/local_rectifier.py`
 
-3. 2차 테일러 우회(FMA 단일 사이클 구현)와 클리핑 방화벽(maximum 가드)을 SwiGLU의 전방 진입점에 이식
-- bypass_rectifiers/ taylor_glu.py                  # 호너법 기반 SwiGLU 우회 정류기
+#### 2. 구면-토러스 위상 가둠 위치 임베딩 (`TorusTopologyRotaryEmbedding`)
+- 왜 이 파일을 만들었을까요? -> 문맥 길이가 길어질수록 복소 평면 상의 회전각이 무한히 발산하여 부동소수점 정밀도(FP16/BF16)를 손상.
+- 고속 나머지 연산 프리미티브(`jax.lax.rem`)를 이용해 모든 라디안 각도를 주기적 도넛(토러스) 다양체 표면 내로 이동. 주소 포인터 오프셋만 비트 레벨에서 바꿔치는 레지스터 프리 롤링 기전으로 초장문(32K~128K+) 위상 누수율을 제거하려 함.
+- **파일:** `bypass_rectifiers/torus_rope.py`
+
+#### 3. 호너법 기반 활성화 함수 플래트닝 코어 (`HomeostaticTaylorGluCore`)
+- 왜 이 파일을 만들었을까요? -> SwiGLU FFN 영역의 대규모 파라미터가 유발하던 SiLU 지수 초월함수 병목과 통계적 비대칭 모멘트 왜곡.
+- 수학적 최적화의 극치인 호너법(Horner's Method)을 주입하여 임시 텐서 메모리 생성을 제거. 가속기가 좋아하는 곱셈-누적(FMA) 파이프라인의 레지스터 셀 하나만을 단일 패스로 순환 점유하여 연산 가동률을 극대화시켜 보려 함.
+- **파일:** `bypass_rectifiers/taylor_glu.py`
+
+#### 4. 범용 FFI LLaMA와 Gemma 하이브리드 하이재커 (`UniversalAttentionWaveHijacker`)
+- 왜 이 파일을 만들었을까요? -> 해당 기능들을 추가적인 비용없이 기존 나와있는 거인들의 어깨 위에 올라타기 위함.
+- `__cuda_array_interface__` v3 프로토콜과 DLPack 공유 컨테이너를 제어선으로 활용하여, 파이토치 레일에서 가중치를 추출해 JAX XLA 가속 엔진에 제로카피로 인입시키고 역전파(Backpropagation) 자동 미분 그라디언트를 공유. 생성자 타임에 클래스 문자열 스캔을 통해 LLaMA와 Gemma의 오프셋 분기를 무분기 플래그로 정적 확인함.
+- **물리 파일:** `wave_attention_hijacker_core.py`
+
 
 ---
 
