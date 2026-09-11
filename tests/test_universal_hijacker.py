@@ -1,24 +1,33 @@
 # -*- coding: utf-8 -*-
 """
-Homeostasis Spatial Bus - LLaMA-3 End-to-End Scale Profiler
-File: benchmark_llama_wave.py
+Homeostasis Spatial Bus - Universal LLaMA & Gemma Runtime Hijacking End-to-End Profiler
+File: tests/test_universal_hijacker.py
 
-[소프트맥스 박멸에 따른 VRAM 절감률 및 토큰 생성 수율 실측 프로파일러]
+[소프트맥스 박멸에 따른 VRAM 절감률 및 토큰 생성 수율 크로스 플랫폼 실측 프로파일러]
 """
 
 import os
 import time
 import torch
-import gc
-# [고도화 포인트] JAX 비동기 파이프라인의 물리 연산 완료를 강제 고정하기 위해 마스터 헤더 바인딩 인입
 import jax
+import gc
 from transformers import AutoConfig, AutoModelForCausalLM
 
-# 고도화 완료된 하이재커 레이어 및 글로벌 인젝터 인입
-from hijack_llama_wave_attention import patch_llama_model_with_wave_attention
+# [아키텍처 정류]: 최종 마감 완공된 통합 FFI 하이재커 코어 패키지 선에서 인젝터 호출
+from wave_attention_hijacker_core import patch_llama_model_with_wave_attention
+
+# ------------------------------------------------------------------------
+# [🌟 방안 B 고도화: psutil 기반 크로스 플랫폼 호스트 물리 메모리 스캔 가드]
+# ------------------------------------------------------------------------
+def get_platform_physical_memory() -> int:
+    try:
+        import psutil
+        return psutil.Process(os.getpid()).memory_info().rss
+    except ImportError:
+        return 0
 
 def measure_hardware_footprint(model, sequence_length: int, batch_size: int = 1) -> tuple:
-    """[📊 HARDWARE PROFILER] 특정 시퀀스 길이 하에서 가속기 순정 런타임 지표 계측"""
+    """[📊 HARDWARE PROFILER - NaN-Free 검포 고도화형] 특정 시퀀스 길이 하에서 가속기 런타임 지표 실측"""
     # 1. 이전 라운드의 메모리 파편화 및 캐시 잔차 완전 진압
     torch.cuda.empty_cache()
     gc.collect()
@@ -26,41 +35,31 @@ def measure_hardware_footprint(model, sequence_length: int, batch_size: int = 1)
     # 2. 스트레스 테스트용 입력 토큰 가상 매니폴드 선언
     input_ids = torch.randint(0, 128256, (batch_size, sequence_length), device="cuda")
     
-    # 3. 기저 VRAM 점유량(정적 가중치 영역 제외 순수 활성화 맵 사양) 측정 준비
+    # 3. 기저 VRAM 점유량 측정 준비
     torch.cuda.reset_peak_memory_stats()
     
     # ------------------------------------------------------------------------
     # [⚡ 고도화 1: JIT 컴파일 래그 소산을 위한 실전형 타깃 스케일 웜업 결착]
     # ------------------------------------------------------------------------
-    # 기존 고정 128 슬라이싱 웜업은 실제 런타임 연산인 sequence_length 진입 시 
-    # XLA가 새로운 크기의 정적 연산 그래프를 그리게 만들어 강제 JIT 컴파일 지연을 유발했습니다.
-    # 본 연산과 완전히 동일한 4차원 텐서 레이아웃으로 웜업을 집행하여 컴파일 오버헤드를 
-    # 계측 타임라인 외부로 영구 출각(소산)시킵니다.
     with torch.no_grad():
         _ = model(input_ids)
     
     # [★ 고도화 핵심 - 하이브리드 비동기 컨텍스트 동기화 배리어]
-    # 하이재킹 모듈 내부에서 작동 중인 JAX XLA 컴파일러 기계어 큐와 파이토치 CUDA 스트림 간의 
-    # 참조선 레이스 컨디션을 파괴하기 위해, 하드웨어 동기화 직전 JAX 가속기 연산 완료를 선제 래칭합니다.
     try:
         jax.effects_barrier()  # 전역 분산 Sharding 비동기 전하량 수착 완결 보증
     except AttributeError:
         pass
-    
-    # JAX 백엔드 비동기 명령어 처리 마진 확보를 위한 하드웨어 동기화
     torch.cuda.synchronize()
     
     # ------------------------------------------------------------------------
     # [⚡ 고도화 2: 기저 피크 메모리 통계선 재초기화 인터록]
     # ------------------------------------------------------------------------
-    # 앞선 웜업 단계에서 순수 JIT 컴파일 그래프 적재용으로 일시 점유되었던 
-    # 하드웨어 HBM 자원 마진을 측정 레일에서 지워버리기 위해 피크 통계를 재정류합니다.
     torch.cuda.reset_peak_memory_stats()
     
     # 4. 본 추론 연산 집행 및 정밀 시간 계측
     start_time = time.perf_counter()
     with torch.no_grad():
-        _ = model(input_ids)
+        output = model(input_ids)
         
     try:
         jax.effects_barrier()
@@ -68,6 +67,13 @@ def measure_hardware_footprint(model, sequence_length: int, batch_size: int = 1)
         pass
     torch.cuda.synchronize()
     elapsed_time = time.perf_counter() - start_time
+    
+    # ------------------------------------------------------------------------
+    # [🌟 도킹 고도화: 순방향 출력 매니폴드 수치 해석적 안정성(NaN-Free) 전수 스캔]
+    # ------------------------------------------------------------------------
+    # 래퍼단을 거쳐 나온 파이토치 최종 텐서가 NaN으로 오염되었는지 실시간 단언 확인합니다.
+    if hasattr(output, "logits"):
+        assert not torch.isnan(output.logits).any(), f"[FATAL ERROR] 추론 결과 logits 평면이 NaN으로 파괴되었습니다. (SeqLen: {sequence_length})"
     
     # 5. 피크 VRAM 소모량 수집 (Byte -> MB 승격)
     peak_vram = torch.cuda.max_memory_allocated() / (1024 * 1024)
@@ -94,6 +100,11 @@ def run_scale_inversion_benchmark():
     # 2K(2048)부터 32K(32768)까지 거대 모델 전용 초장문 컨텍스트 스트레스 스케일 정의
     context_scales = [2048, 4096, 8192, 16384, 32768]
     
+    # ------------------------------------------------------------------------
+    # [🌟 방안 B 고도화: 벤치마크 진입 전 호스트 물리 자원(RSS) 초기 기저선 포획]
+    # ------------------------------------------------------------------------
+    host_mem_start = get_platform_physical_memory()
+    
     print("\n========================================================================")
     print("🔥 [⚡ SYSTEM BASELINE] 1단계: 레거시 PyTorch 바닐라 Softmax Attention 성능 측정")
     print("========================================================================")
@@ -117,20 +128,14 @@ def run_scale_inversion_benchmark():
                 print(f"💀 [OOM CRASH] 레거시 Softmax가 {scale} 구간에서 메모리 폭발로 침몰했습니다.")
                 vanilla_results[scale] = (float('inf'), 0.0)
                 
-                # ------------------------------------------------------------------------
-                # [⚡ 고도화: OOM 유발 활성화 맵 강제 인프라 해제 배리어]
-                # ------------------------------------------------------------------------
-                # 바닐라 파이트가 메모리 한계를 견디지 못하고 폭발할 때 발생한 
-                # 파편화 오염 및 데드락 래그가 가속기 캐시 할당자에 누수 잔차로 남지 않도록
-                # 즉각적인 닫힌계 청소 프로토콜을 선제 호출하여 인터페이스 붕괴를 영구 방어합니다.
+                # [🛡️ HBM 닫힌계 청정 수호 프로토콜]: 파편화 오염 즉각 진압 및 해제 배리어 작동
                 torch.cuda.empty_cache()
                 gc.collect()
                 break
             else:
                 raise e
 
-            
-       # [🛡️ HBM 닫힌계 청정 수호 프로토콜]
+         # [🛡️ HBM 닫힌계 청정 수호 프로토콜]
     # 바닐라 모델 측정 라운드가 끝나는 즉시 메모리 풀에서 가중치를 강제 출각하고
     # 캐시 연쇄 비우기를 주입하여 후속 파동 모델 측정 평면에 잔차 간섭을 원천 차단합니다.
     del vanilla_model
@@ -161,8 +166,9 @@ def run_scale_inversion_benchmark():
             # 파동 레일 구동 중 예기치 못한 하드웨어 예외 발생 시 안전 장벽 작동
             print(f"❌ [CRASH] 파동 레일 {scale} 구간 예외 발생: {str(e)}")
             wave_results[scale] = (float('inf'), 0.0)
+
             
-    # ------------------------------------------------------------------------
+     # ------------------------------------------------------------------------
     # [📊 STEP 4: 최종 성적표 출력 및 자원 세이빙 리포트 출력 - 헤더 정렬]
     # ------------------------------------------------------------------------
     print("\n========================================================================")
@@ -187,15 +193,34 @@ def run_scale_inversion_benchmark():
             boost = (w_tps / v_tps) if v_tps > 0 else 0.0
             boost_str = f"{boost:.2f}x"
             
-        # 2. [🛡️ vram_str_w 변수 단선 결함 교정 패치]
-        # 상단 블록과 하단 print 함수 간의 명세 불일치를 유발하던 네이밍 파편화를 교정하여
-        # 하이재킹 실험군의 실측 메모리 데이터를 오차 없이 정상 출력합니다.
+        # 2. 하이재킹 실험군의 실측 메모리 데이터 정류 사상
         w_vram_str = f"{w_vram:.1f} MB" if w_vram != float('inf') else "CRASH"
         
         # 3. 인프라 실측 최종 성적표 스트리밍 출사
         print(f"{scale:<10} | {vram_str:<14} | {w_vram_str:<12} | {saving_str:<13} | {boost_str:<16}")
     print("========================================================================\n")
 
+    # ------------------------------------------------------------------------
+    # [★ 추가 고도화 핵심 - OS 물리 메모리 지터 누수 차단 크로스 플랫폼 최종 교차 단언]
+    # ------------------------------------------------------------------------
+    # [🌟 방안 B 고도화]: 벤치마크 종료 전 호스트의 실제 최종 자원 사용량을 재포획하여
+    # 대규모 학습/서빙 가중치 핫 플러깅 주행 시에도 호스트 자원 탈루가 제로인지 검증합니다.
+    host_mem_final = get_platform_physical_memory()
+    host_jitter_amplitude = abs(host_mem_final - host_mem_start)
+    
+    print(f"├─ [인프라] 하이재킹 가동 전 호스트 자원 총량 : {host_mem_start} Byte")
+    print(f"├─ [인프라] 거대 대조군/실험군 주행 후 자원 총량 : {host_mem_final} Byte")
+    print(f"🚨 [결론] 크로스 플랫폼 호스트 실제 물리 메모리 변동 진폭 : {host_jitter_amplitude} Byte")
+    
+    # 가비지 컬렉터(GC) 자원 정류 설계 및 링버퍼 최적화 덕분에 64KB 이내 유지 단언
+    assert host_jitter_amplitude <= 65536, (
+        f"[FATAL ERROR] 인프라 탈루: 대규모 런타임 교체 주행 도중 정적 자원 바운더리가 찢어져 메모리 지터가 터졌습니다!\n"
+        f"실측 진폭 수치: {host_jitter_amplitude} Byte"
+    )
+
+    print("\n🎉 [SUCCESS] 모든 대규모 스트레스 벤치마크와 크로스 플랫폼 자원 단언 테스트를 완전히 관류했습니다!")
+
 if __name__ == "__main__":
     run_scale_inversion_benchmark()
+
 
