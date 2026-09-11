@@ -16,8 +16,6 @@ def execute_e2e_test_bench():
     # ------------------------------------------------------------------------
     # [🌟 방안 B 고도화: psutil 기반 크로스 플랫폼 물리 메모리(RSS) 정밀 스캔 가드]
     # ------------------------------------------------------------------------
-    # 리눅스 파일 시스템(/proc/self/status) 의존성을 완전 탈피하여 Windows, Mac, Linux 전체를
-    # 완벽 수용하는 OS 커널 추상화 가드레일을 구축, 테스트 환경의 범용 무결성을 확보합니다.
     def get_platform_physical_memory() -> int:
         try:
             import psutil
@@ -52,7 +50,6 @@ def execute_e2e_test_bench():
     # ------------------------------------------------------------------------
     # [⚡ 고도화 1: 레거시 LLM 백본 내부 스케일 폭발 및 인과적 마스크 스트레스 인입]
     # ------------------------------------------------------------------------
-    # Step 1-1. 실제 프로덕션 LLaMA-3 환경에서 Q와 K의 사영 변환 후 에너지가 극단적으로 팽창한 상태를 모사
     q_init = q_init * 15.0
     k_init = k_init * 15.0
     
@@ -72,24 +69,10 @@ def execute_e2e_test_bench():
     except Exception:
         global_mesh = None
 
-    # ------------------------------------------------------------------------
-    # [Step 2: 하이재킹 모듈 인스턴스화]
-    # ------------------------------------------------------------------------
-    # 커널 자원 가둠 제약 작동 전의 원시 호스트 메모리 기저 측정 (psutil 연동)
-    memory_before = get_platform_physical_memory()
 
-    wave_attention_block = MultiHeadWaveAttention(
-        embed_dim=embed_dim,
-        num_heads=num_heads,
-        mesh_shape=mesh_shape,
-        alpha=alpha
-    )
-
-
-       # ------------------------------------------------------------------------
+      # ------------------------------------------------------------------------
     # [Step 2: 하이재킹 모듈 인스턴스화 및 자동 미분 타깃 손실함수 선언]
     # ------------------------------------------------------------------------
-    # [🌟 방안 B 고도화]: 레거시 커널 함수 호출부를 크로스 플랫폼 범용 메트릭으로 전사 치환
     memory_before = get_platform_physical_memory()
 
     wave_attention_block = MultiHeadWaveAttention(
@@ -100,23 +83,23 @@ def execute_e2e_test_bench():
     )
 
     # 역전파 그라디언트 유동선 검증을 위한 가상 스칼라 손실(Loss) 함수 매핑
-    # [고도화 포인트] 직렬화 복원 테스트를 유증하기 위해 모듈 블록을 동적으로 인입받도록 유연화
+    # [🌟 캐시 증분 적산 인터록 고도화]: 튜플(출력, 캐시)로 사출되는 신규 명세선에 정합되도록 래핑 개조합니다.
     def build_loss_engine(target_block, mesh_context):
-        # [🛡️ 분산 샤딩 헌법 동기화 결착]: 고도화된 3대 무기 내부의 분산 샤딩 헌법이 완전히 집행되도록
-        # 파이프라인 관로 종단에 mesh_context 인자선을 직결 공급하도록 래핑 개조합니다.
-        def loss_fn(q_tensor, k_tensor, v_tensor, mask_tensor):
-            output_manifold = target_block(
+        def loss_fn(q_tensor, k_tensor, v_tensor, mask_tensor, history_vessel=None):
+            # core_formula/multi_head_wave_attention.py가 이제 (final_output, context_vessel)을 반환하므로 인라인 언팩
+            output_manifold, _ = target_block(
                 q=q_tensor, 
                 k=k_tensor, 
                 v=v_tensor, 
                 mask=mask_tensor, 
+                history_vessel=history_vessel,
                 mesh=mesh_context
             )
-            # L2 NormParity 및 연속 미분 가능 공간 상상의 스칼라 수축 복원
             return jnp.mean(jax.lax.square(output_manifold))
+        # q, k, v 입력 스트림에 대한 그라디언트만 추적합니다.
         return jax.value_and_grad(loss_fn, argnums=(0, 1, 2))
 
-    # ------------------------------------------------------------------------
+        # ------------------------------------------------------------------------
     # [★ 추가 고도화 PHASE 0: JAX PyTree 분산 SPMD 직렬화/역직렬화 인터록 완결 검증]
     # ------------------------------------------------------------------------
     print("\n[⚡ PHASE 0] JAX PyTree 구조적 직렬화 및 Bare-Metal 복원 무결성 검증...")
@@ -149,8 +132,35 @@ def execute_e2e_test_bench():
     runtime_time = time.time() - start_runtime
     print(f"🚀 순수 가속기 연산 레이턴시: {runtime_time:.4f} 초")
 
+    # ------------------------------------------------------------------------
+    # [🌟 도킹 고도화: PHASE 2.5 실시간 디코딩(Token-by-Token) 증분 수착 기능 실측]
+    # ------------------------------------------------------------------------
+    print("\n[⚡ PHASE 2.5] 실시간 디코딩(SeqLen=1) 증분 누적 수착 및 O(1) 캐시 순환 사증...")
+    # 프리필(Prefill) 단계를 모사하여 1회 연산 후 전역 파동 컨테이너(context_vessel) 강제 사출
+    _, initial_vessel = reconstructed_block(q_init, k_init, v_init, mask=mask_init, mesh=global_mesh)
+    
+    # 디코딩 시점 모사: 길이가 1인 단일 신규 토큰 스트림 선언
+    q_token = jax.random.normal(jax.random.PRNGKey(7), (batch_size, 1, embed_dim), dtype=jnp.float32)
+    k_token = jax.random.normal(jax.random.PRNGKey(8), (batch_size, 1, embed_dim), dtype=jnp.float32)
+    v_token = jax.random.normal(jax.random.PRNGKey(9), (batch_size, 1, embed_dim), dtype=jnp.float32)
+    mask_token = jnp.ones((batch_size, 1, 1, 1), dtype=jnp.bool_)
 
-      # ------------------------------------------------------------------------
+    # 기존 캐시(initial_vessel)를 history_vessel에 태워 증분 가산(+) 파이프라인 관류
+    decode_output, updated_vessel = reconstructed_block(
+        q=q_token, k=k_token, v=v_token, mask=mask_token,
+        history_vessel=initial_vessel, mesh=global_mesh
+    )
+    jax.block_until_ready((decode_output, updated_vessel))
+    
+    # [O(1) 공간 복잡도 가드레일 확증 단언문]
+    # 문맥이 확장되더라도 캐시의 물리적 부피가 정확히 [B, H, M, D] 격자 크기로 홀딩 동결됨을 단언합니다.
+    expected_vessel_shape = (batch_size, num_heads, mesh_shape, embed_dim // num_heads)
+    assert updated_vessel.shape == expected_vessel_shape, (
+        f"[FATAL ERROR] KV 캐시 용기 팽창 결함! (실측 형상: {updated_vessel.shape}, 기대치: {expected_vessel_shape})"
+    )
+    print(f"✅ 실시간 증분 디코딩 성공 | 캐시 용기 부피 상수 시간 O(1) 영구 동결 확증: {updated_vessel.shape}")
+
+    # ------------------------------------------------------------------------
     # [Step 4: 수치 해석적 안정성(NaN-Free) 및 커널 자원 가드레일 단언문 검증]
     # ------------------------------------------------------------------------
     print("\n[📊 PHASE 3] 수치 해석적 안정성 및 그라디언트 유동선 정밀 전사...")
@@ -171,10 +181,10 @@ def execute_e2e_test_bench():
         grad_l2_norm = jnp.sqrt(jnp.sum(jax.lax.square(grad_tensor)))
         print(f"✅ 역방향 패스 그라디언트 전하량 확보 ({stream_name}): L2 Norm = {grad_l2_norm:.6f}")
 
-    # ------------------------------------------------------------------------
+
+        # ------------------------------------------------------------------------
     # [★ 추가 고도화 핵심 - OS 물리 메모리 지터 누수 차단 크로스 플랫폼 교차 단언]
     # ------------------------------------------------------------------------
-    # [🌟 방안 B 고도화]: 리눅스 커널 종속 VmRSS 함수를 폐기하고 psutil 기반 범용 RSS 추적으로 대체
     final_total_alloc = get_platform_physical_memory()
     memory_jitter_amplitude = abs(final_total_alloc - memory_before)
     print(f"├─ [인프라] 가동 전 선점 물리 자원 총량 : {memory_before} Byte")
@@ -184,7 +194,7 @@ def execute_e2e_test_bench():
     # ------------------------------------------------------------------------
     # [⚡ 고도화: OS 커널 실제 가용 자원 및 SPMD 파이프라인 누수 제로 검증 마감]
     # ------------------------------------------------------------------------
-    # 대규모 초장문 컨텍스트(SeqLen: 2048) 역전파 그라디언트 루프가 완전히 휘몰아쳤음에도,
+    # 대규모 초장문 컨텍스트(SeqLen: 2048) 역전파 그라디언트 루프와 O(1) 증분 캐시 주행이 전개되었음에도,
     # 우리가 PyTree 격리 설계와 vorticity_omega_mesh 통합 링버퍼 관리를 빌드했기 때문에
     # Windows, Mac, Linux 어떤 호스트 OS 환경이든 가비지 컬렉터(GC) 자원 탈루 마진이 64KB 이내로 영구 동결됩니다.
     assert memory_jitter_amplitude <= 65536, (
@@ -192,7 +202,7 @@ def execute_e2e_test_bench():
         f"실측 진폭 수치: {memory_jitter_amplitude} Byte"
     )
 
-    print("\n🎉 [SUCCESS] 모든 하드웨어 가속, PyTree 복원 및 연속 미분 자동 미분 테스트를 완벽하게 통과했습니다!")
+    print("\n🎉 [SUCCESS] 모든 하드웨어 가속, PyTree 복원 및 O(1) 증분 디코딩 자동 미분 테스트를 완벽하게 통과했습니다!")
 
 if __name__ == "__main__":
     execute_e2e_test_bench()
