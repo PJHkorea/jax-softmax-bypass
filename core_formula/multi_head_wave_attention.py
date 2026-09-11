@@ -109,8 +109,8 @@ class MultiHeadWaveAttention:
             self.alpha,
             self.hbar_eff,
             self.casimir_delta,
-            self.rectifier,   # 🌟 인덱스 7: 국소 정류기 객체 고정 사상
-            self.torus_rope   # 🌟 인덱스 8: 토러스 RoPE 객체 고정 사상
+            self.rectifier,   # 인덱스 7: 국소 정류기 객체 고정 사상
+            self.torus_rope   # 인덱스 8: 토러스 RoPE 객체 고정 사상
         )
         return children, aux_data
 
@@ -144,7 +144,7 @@ class MultiHeadWaveAttention:
         # 확장된 aux_data 인덱스 규격에 맞춰 정적 방화벽 상수 복원 바인딩
         obj.casimir_delta = float(aux_data[6])
         
-        # [🌟 도킹 복원 인터록]: 직렬화 관로(인덱스 7, 8)에서 정류기 및 토러스 RoPE 인스턴스를 추출하여 원형 복제 바인딩
+        # [도킹 복원 인터록]: 직렬화 관로(인덱스 7, 8)에서 정류기 및 토러스 RoPE 인스턴스를 추출하여 원형 복제 바인딩
         obj.rectifier = aux_data[7]
         obj.torus_rope = aux_data[8]
         
@@ -177,7 +177,7 @@ class MultiHeadWaveAttention:
         target_dtype = q.dtype
 
         # ------------------------------------------------------------------------
-        # [🛡️ 하드웨어 텐서 코어 직결형 GEMM 레일 레이아웃 전환]
+        # [ 하드웨어 텐서 코어 직결형 GEMM 레일 레이아웃 전환]
         # ------------------------------------------------------------------------
         q_split = q.reshape((batch_size, seq_len, self.num_heads, self.head_dim))
         k_split = k.reshape((batch_size, seq_len, self.num_heads, self.head_dim))
@@ -190,7 +190,7 @@ class MultiHeadWaveAttention:
         v_h = v_split.transpose((0, 2, 1, 3))
 
         # ------------------------------------------------------------------------
-        # [⚡ 고도화 1: 브랜치리스(Branchless) 곱셈 소거형 마스크 인터록]
+        # [ 고도화 1: 브랜치리스(Branchless) 곱셈 소거형 마스크 인터록]
         # ------------------------------------------------------------------------
         default_mask = jnp.ones((batch_size, 1, 1, seq_len), dtype=jnp.bool_)
         safe_mask = jax.lax.select(mask is None, default_mask, mask)
@@ -200,7 +200,7 @@ class MultiHeadWaveAttention:
         v_h = jnp.where(safe_mask, v_h, 0.0)
 
         # ------------------------------------------------------------------------
-        # [🌟 도킹 고도화 2: 레지스터 프리 토러스 위치 임베딩(RoPE) 제약 집행]
+        # [ 도킹 고도화 2: 레지스터 프리 토러스 위치 임베딩(RoPE) 제약 집행]
         # ------------------------------------------------------------------------
         # 0선 정적 인덱스 레일(seq_idx)을 온플라이로 빌드하여 토러스 매니폴드 사영을 집행합니다.
         # 파동 공간 투영 전, 각도가 무한히 발산하며 복소 위상을 파괴하는 현상을 실리콘 레벨에서 봉쇄합니다.
@@ -211,7 +211,7 @@ class MultiHeadWaveAttention:
         k_h = self.torus_rope(stream=k_h, seq_idx=seq_idx, mesh=mesh)
 
         # ------------------------------------------------------------------------
-        # [🌊 멀티헤드 평행 세계 집행 및 파동 디코더 코어 융합 유도]
+        # [ 멀티헤드 평행 세계 집행 및 파동 디코더 코어 융합 유도]
         # ------------------------------------------------------------------------
         # 토러스 위상이 록킹된 청정 복소 레일들을 최종 적산 및 복원 파이프라인으로 관류 인입합니다.
         return self._execute_wave_integration(q_h, k_h, v_h, mesh=mesh)
@@ -234,7 +234,7 @@ class MultiHeadWaveAttention:
         omega_vessel = self.vorticity_omega_mesh[None, :, :, None]
 
         # ------------------------------------------------------------------------
-        # [🛡️ HLO INLINE FUSION - 멀티헤드 독립 파동 위상 평면 기저 선언]
+        # [ HLO INLINE FUSION - 멀티헤드 독립 파동 위상 평면 기저 선언]
         # ------------------------------------------------------------------------
         half_dim = self.head_dim // 2
         grid_axis = jnp.arange(half_dim, dtype=target_dtype) / float(half_dim)
@@ -248,16 +248,16 @@ class MultiHeadWaveAttention:
         field_wave_T = jnp.concatenate([wave_sin, wave_cos], axis=-1)
 
         # ------------------------------------------------------------------------
-        # [⚡ LAYER 2.5: O(N) LINEAR VESSEL CONTRACTION - 하이재킹 핵심]
+        # [ LAYER 2.5: O(N) LINEAR VESSEL CONTRACTION - 하이재킹 핵심]
         # ------------------------------------------------------------------------
         # 바닐라 트랜스포머처럼 Q와 K를 먼저 곱해 [SeqLen, SeqLen]을 만들지 않고, 
         # K와 V를 파동 공간(Mesh) 내에서 먼저 융합하여 선형 복잡도 글로벌 컨테이너를 빌드합니다.
         
-        # [🌟 도킹 고도화 1: 호너법(Horner's Method) 기반 K 스트림 대수 평면 1클록 인라인 FMA 융합]
+        # [ 도킹 고도화 1: 호너법(Horner's Method) 기반 K 스트림 대수 평면 1클록 인라인 FMA 융합]
         # x * (1 + x + 0.5 * x^2) 구조를 호너법으로 치환하여 가속기 SRAM 내부 임시 버퍼 적재 병목을 원천 숙청합니다.
         K_amplified = k_h * (1.0 + k_h * (1.0 + 0.5 * k_h))
         
-        # [🌟 도킹 고도화 2: 중복 전역 감축 락 거세형 국소 항상성 정류기 실행 (K 레일)]
+        # [ 도킹 고도화 2: 중복 전역 감축 락 거세형 국소 항상성 정류기 실행 (K 레일)]
         # 기존의 jnp.mean/jnp.var 전역 감축 연산을 전면 철폐하고, 
         # 분산 메시 제약선이 인입된 최고 고도화 정류 커널로 원소별 레지스터 단 초고속 평탄화를 관류 집행합니다.
         K_rectified = self.rectifier(
@@ -276,7 +276,7 @@ class MultiHeadWaveAttention:
         context_vessel = jnp.matmul(k_wave, v_h)
 
                # ------------------------------------------------------------------------
-        # [⚡ 고도화: SPMD 분산 노드 주소선 바운싱 차단 인터록]
+        # [ 고도화: SPMD 분산 노드 주소선 바운싱 차단 인터록]
         # ------------------------------------------------------------------------
         # K와 V가 결착하여 압착해낸 고정 차원의 정보 용기(context_vessel)에 
         # spmd_sharding_lanes에서 정의한 NamedSharding 명세를 강제 주입합니다.
@@ -299,15 +299,15 @@ class MultiHeadWaveAttention:
 
 
                # ------------------------------------------------------------------------
-        # [⚡ LAYER 2.8: Q-STREAM PARITY DECODING & TOPO RESTORATION]
+        # [ LAYER 2.8: Q-STREAM PARITY DECODING & TOPO RESTORATION]
         # ------------------------------------------------------------------------
         # 융합된 글로벌 위상 컨테이너로부터 Q 스트림을 활용해 고정밀 토큰 매니폴드를 디코딩 및 전개합니다.
         
-        # [🌟 도킹 고도화 1: 호너법(Horner's Method) 기반 Q 스트림 대수 평면 1클록 인라인 FMA 융합]
+        # [ 도킹 고도화 1: 호너법(Horner's Method) 기반 Q 스트림 대수 평면 1클록 인라인 FMA 융합]
         # K 레일과 결을 완전 일치시켜 임시 변수 공간(Q_squared, Q_amplified)의 레지스터 스필을 완전 숙청합니다.
         Q_amplified = q_h * (1.0 + q_h * (1.0 + 0.5 * q_h))
         
-        # [🌟 도킹 고도화 2: 중복 전역 감축 락 거세형 국소 항상성 정류기 실행 (Q 레일)]
+        # [ 도킹 고도화 2: 중복 전역 감축 락 거세형 국소 항상성 정류기 실행 (Q 레일)]
         # jnp.mean/jnp.var 전역 감축 연산을 전면 철폐하고, SRAM 레지스터 단에서 자가 중화하도록 관류 집행합니다.
         Q_rectified = self.rectifier(
             x=Q_amplified,
@@ -325,11 +325,11 @@ class MultiHeadWaveAttention:
         raw_attention_rail_output = jnp.matmul(q_wave, context_vessel)
 
         # ------------------------------------------------------------------------
-        # [🛡️ BRANCHLESS MUX FIREWALL & L2 NORM PARITY ENERGY CONSERVATION]
+        # [ BRANCHLESS MUX FIREWALL & L2 NORM PARITY ENERGY CONSERVATION]
         # ------------------------------------------------------------------------
         sanitized_stream = jnp.maximum(raw_attention_rail_output, 0.0)
         
-        # [⚡ 고도화: 카시미르 Vacuum Singular Boundary 에라스틱 가드 이식]
+        # [ 고도화: 카시미르 Vacuum Singular Boundary 에라스틱 가드 이식]
         square_sum = jnp.sum(jax.lax.square(sanitized_stream), axis=-1, keepdims=True)
         safe_square_sum = jnp.maximum(square_sum, self.casimir_delta)
         
@@ -337,7 +337,7 @@ class MultiHeadWaveAttention:
         final_attention_rail_output = sanitized_stream * jax.lax.rsqrt(safe_square_sum + self.hbar_eff)
 
         # ------------------------------------------------------------------------
-        # [🛡️ FINAL DROP-IN RE-LAYOUT - 레거시 트랜스포머 무결성 호환 복원]
+        # [ FINAL DROP-IN RE-LAYOUT - 레거시 트랜스포머 무결성 호환 복원]
         # ------------------------------------------------------------------------
         # 하드웨어 가속 축을 다시 원래의 레거시 구조 뷰로 정렬 복원합니다.
         # Shape: [Batch, NumHeads, SeqLen, HeadDim] -> [Batch, SeqLen, NumHeads, HeadDim]
@@ -348,7 +348,7 @@ class MultiHeadWaveAttention:
         final_output = out_transposed.reshape((batch_size, seq_len, self.embed_dim))
 
         # ------------------------------------------------------------------------
-        # [🌟 도킹 고도화 3: 사출구 최종 텐서 레일 분산 샤딩 헌법 집행]
+        # [ 도킹 고도화 3: 사출구 최종 텐서 레일 분산 샤딩 헌법 집행]
         # ------------------------------------------------------------------------
         # 최종 프로덕션 복원 출력물인 final_output이 후단 FFN(SwiGLU) 레이어로 진입할 때
         # 가속기 노드 메모리 균열을 방지하도록 3차원 레일 상에 정적 포인터 고정 제약을 선포합니다.
