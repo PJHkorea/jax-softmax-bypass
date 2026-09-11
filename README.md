@@ -1,7 +1,9 @@
 ### 추가 작업 예정 
 1. 로컬 정류 정규화(Local Rectified Norm)’ 닫힌계로 대체
-2. 회전 위치 임베딩의 위치 각도를 끝없이 발산하게 두는 것이 아니라, 닫힌 도넛 위상(토러스 변환) 안으로 강제 감금
-3. 2차 테일러 우회(FMA 단일 사이클 구현)와 클리핑 방화벽(maximum 가드)을 SwiGLU의 전방 진입점에 이식
+- LocalHomeostaticRectifier (정규화 계층) ──> 디코더 내부 jnp.mean과 jnp.var 전역 락을 제거하기 위해, self.rectifier 인스턴스로 완전히 대체 주입.
+
+3. 회전 위치 임베딩의 위치 각도를 끝없이 발산하게 두는 것이 아니라, 닫힌 도넛 위상(토러스 변환) 안으로 강제 감금
+4. 2차 테일러 우회(FMA 단일 사이클 구현)와 클리핑 방화벽(maximum 가드)을 SwiGLU의 전방 진입점에 이식
 
 
 ## Softmax-Bypassing Wave Decoder (`jax-softmax-bypass`)
