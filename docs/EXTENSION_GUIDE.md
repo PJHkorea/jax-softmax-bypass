@@ -112,3 +112,10 @@ def establish_static_moe_routing_highway(
 ```
 
 - **MoE Hardware Verification:** When profiling the exported HLO assembly block via Section 2, verify that **no conditional branching or dynamically sized allocation kernels (`alloc`) exist inside the expert routing loop**. The static padding forces the compiler to treat the entire multi-expert MoE layout as a parallelized, deterministic matrix contraction lane, yielding maximum execution throughput.
+
+### 4. Reference Production Blueprint (Target implementation at examples/moe_router_blueprint.py)
+
+For a complete architectural integration, the system isolates individual routing channels using inline bitwise operations and a zero-recompilation matrix allocation grid. This layout completely eliminates Python loop stalls and structural array mutations across the device cluster.
+
+*(Note: The full implementation of `StaticMoEWaveRouter` utilizing `bypass_rectifiers.taylor_glu.HomeostaticTaylorGluCore` can be found in the referenced project files under `examples/moe_router_blueprint.py`, implementing static tensor padding, branchless slot mapping, and parallel expert execution).*
+
